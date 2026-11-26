@@ -31,13 +31,31 @@ async function freePort(): Promise<number> {
   });
 }
 
-export async function startDisposableDaemon(cli: string, options: { config?: Record<string, unknown> } = {}): Promise<Harness> {
+export interface StartOptions {
+  config?: Record<string, unknown>;
+  /** Launch a daemon built from another checkout instead of the installed CLI. */
+  launch?: { script: string; args?: string[] };
+  env?: Record<string, string>;
+  /** Runs against the empty temp home before the daemon starts (seed accounts, etc.). */
+  prepare?: (home: string) => Promise<void>;
+}
+
+export async function startDisposableDaemon(cli: string, options: StartOptions = {}): Promise<Harness> {
   const home = await realpath(await mkdtemp(join(tmpdir(), "paseo-users-probe-")));
   const port = await freePort();
   if (port === 6767 || port < 1024) throw new Error(`refusing unsafe probe port ${port}`);
   if (options.config) await writeFile(join(home, "config.json"), JSON.stringify(options.config), { mode: 0o600 });
   const password = `probe-${Math.random().toString(36).slice(2)}-synthetic`;
-  const child: ChildProcess = spawn(process.execPath, [cli, "daemon", "run", "--home", home], {
+  if (options.prepare) {
+    try {
+      await options.prepare(home);
+    } catch (error) {
+      await rm(home, { recursive: true, force: true });
+      throw error;
+    }
+  }
+  const launchArgs = options.launch ? [options.launch.script, ...(options.launch.args ?? [])] : [cli, "daemon", "run", "--home", home];
+  const child: ChildProcess = spawn(process.execPath, launchArgs, {
     detached: true, // own process group so teardown cannot touch anything else
     stdio: "ignore",
     env: {
@@ -47,6 +65,7 @@ export async function startDisposableDaemon(cli: string, options: { config?: Rec
       PASEO_LISTEN: `127.0.0.1:${port}`,
       PASEO_PASSWORD: password,
       PASEO_RELAY_ENABLED: "false",
+      ...options.env,
     },
   });
   const pid = child.pid;
@@ -82,6 +101,8 @@ type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-ex
 export interface ProbeSession {
   serverInfo: Json | null;
   rejected: Json | null;
+  /** Resolves with the close code when the daemon (or we) end the socket. */
+  closed: Promise<{ code: number }>;
   request(message: Json): Promise<Json>;
   close(): void;
 }
@@ -90,9 +111,10 @@ let counter = 0;
 
 export async function connect(
   harness: Harness,
-  options: { password?: string | null; clientId: string; sessionPermissions?: string[] },
+  options: { password?: string | null; auth?: Json; headers?: Record<string, string>; clientId: string; sessionPermissions?: string[] },
 ): Promise<ProbeSession> {
-  const ws = new WebSocket(`ws://127.0.0.1:${harness.port}/ws`);
+  const ws = new WebSocket(`ws://127.0.0.1:${harness.port}/ws`, { headers: options.headers });
+  const closed = new Promise<{ code: number }>((resolve) => ws.once("close", (code) => resolve({ code })));
   await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
   const waiters = new Map<string, (m: Json) => void>();
   let serverInfo: Json | null = null;
@@ -115,13 +137,15 @@ export async function connect(
     clientId: options.clientId,
     clientType: "cli",
     protocolVersion: 1,
-    ...(options.password ? { auth: { kind: "password", password: options.password } } : {}),
+    capabilities: { hello_rejection: true },
+    ...(options.auth ? { auth: options.auth } : options.password ? { auth: { kind: "password", password: options.password } } : {}),
     ...(options.sessionPermissions ? { sessionPermissions: options.sessionPermissions } : {}),
   }));
   await Promise.race([settled, new Promise((_, rej) => setTimeout(() => rej(new Error("hello timed out")), 15_000))]);
   return {
     get serverInfo() { return serverInfo; },
     get rejected() { return rejected; },
+    closed,
     request(message) {
       const requestId = `probe-${++counter}`;
       return new Promise<Json>((resolve, reject) => {
