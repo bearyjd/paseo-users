@@ -12,11 +12,14 @@ on. The rendered plan was applied by hand, step by step, after reading `apply.sh
   `PASEO_HOME`, not the existing one.
 - Claude, Codex and OpenCode all reported `ready` with their model catalogs, so the daemon sees the provider CLIs when
   `environmentPath` matches the existing unit's `PATH`.
+- **A real agent turn worked:** a Claude agent (`claude-haiku-5-5`) created through the second daemon, in an empty temp
+  directory, replied correctly using the same login as the existing daemon. So login sharing is proven for Claude.
+  Codex and OpenCode turns were not run (they only reported `ready`). The test agent, workspace and project were removed.
 - The existing daemon kept running, unchanged.
 - Cost: about 1 GB resident while starting (peak 1.7 GB), then roughly 270 MB for the daemon process.
 
-**Still not exercised:** an actual agent turn through the second daemon (a `ready` status is not proof that the logins
-work; only a turn is), the app adding the second daemon as a host, restart and boot persistence, `unix-account` mode,
+**Still not exercised:** agent turns for Codex and OpenCode (a `ready` status is not proof that logins work; only a
+turn is), the app adding the second daemon as a host, restart and boot persistence, `unix-account` mode,
 and revocation. Treat each as unverified until done. Apply by hand, one person at a time, and check each step.
 
 ## What this is
@@ -194,7 +197,7 @@ Revoking does not remove the person's host entry in their app; it stops answerin
 
 None of these have been exercised on a real host. Check each before relying on it.
 
-- **LLM login sharing** (`same-user`): that an agent turn works, beyond the providers reporting `ready`. That Claude, Codex and other provider CLIs launched by a user-unit daemon find
+- **LLM login sharing** (`same-user`): proven for Claude only (one agent turn). Unproven for Codex and OpenCode. That Claude, Codex and other provider CLIs launched by a user-unit daemon find
   their logins in the user's home exactly as they do from your shell, and that two daemons using one login at once
   work (token refresh, rate limits, session files). Per provider.
 - **API keys** (`unix-account`): which environment variables each provider reads, and that `.paseo-provider.env` is
