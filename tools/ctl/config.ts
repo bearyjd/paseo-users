@@ -32,6 +32,12 @@ const PersonSchema = z
   })
   .strict();
 
+// One PATH entry: absolute directory, or %h (systemd's specifier for the user's home) followed by
+// an optional sub-path. No other specifier, no spaces, quotes or empty entries.
+const PATH_SEGMENT = "[A-Za-z0-9_.+@-]+";
+const PATH_ENTRY = `(?:%h(?:/${PATH_SEGMENT})*|(?:/${PATH_SEGMENT})+|/)`;
+const ENV_PATH = new RegExp(`^${PATH_ENTRY}(?::${PATH_ENTRY})*$`);
+
 export const ConfigSchema = z
   .object({
     userHome: absPath("userHome"),
@@ -39,6 +45,12 @@ export const ConfigSchema = z
     basePort: port,
     paseoBinary: absPath("paseoBinary"),
     homeBase: absPath("homeBase").optional(),
+    /**
+     * PATH for same-user daemons, as a colon-separated list of absolute directories. systemd user
+     * units start with a minimal PATH, so without this the daemon may not find provider CLIs
+     * (claude, codex, git). Copy it from your existing daemon's unit. Not applied to unix-account units.
+     */
+    environmentPath: z.string().regex(ENV_PATH, "environmentPath must be absolute directories separated by ':' (or start with %h), with no spaces, quotes, other '%' or empty entries").optional(),
     /** Parent of unix-account homes. */
     unixAccountHomeBase: absPath("unixAccountHomeBase").default("/home"),
     allowAllInterfaces: z.boolean().default(false),
@@ -64,6 +76,7 @@ export interface ResolvedConfig {
   listenAddress: string;
   paseoBinary: string;
   homeBase: string;
+  environmentPath?: string;
   unixAccountHomeBase: string;
   allowAllInterfaces: boolean;
   allowDefaultPort: boolean;
@@ -153,6 +166,7 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
     listenAddress: c.listenAddress,
     paseoBinary: c.paseoBinary,
     homeBase,
+    ...(c.environmentPath ? { environmentPath: c.environmentPath } : {}),
     unixAccountHomeBase: c.unixAccountHomeBase,
     allowAllInterfaces: c.allowAllInterfaces,
     allowDefaultPort: c.allowDefaultPort,

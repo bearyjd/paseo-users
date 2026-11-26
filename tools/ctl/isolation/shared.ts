@@ -12,6 +12,8 @@ export interface UnitInput {
   listen: string;
   paseoBinary: string;
   envFile: string;
+  /** PATH for the daemon (same-user only). */
+  environmentPath?: string;
   /** Optional extra EnvironmentFile (prefixed with "-" so a missing file is fine). */
   optionalEnvFile?: string;
 }
@@ -32,6 +34,7 @@ export function renderUnit(i: UnitInput): string {
     `Environment=PASEO_HOME=${i.paseoHome}`,
     `Environment=PASEO_LISTEN=${i.listen}`,
     "Environment=PASEO_RELAY_ENABLED=false",
+    ...(i.environmentPath ? [`Environment=PATH=${i.environmentPath}`] : []),
     `EnvironmentFile=${i.envFile}`,
   ];
   if (i.optionalEnvFile) lines.push(`EnvironmentFile=-${i.optionalEnvFile}`);

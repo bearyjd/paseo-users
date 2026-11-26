@@ -89,7 +89,14 @@ A JSON file. Everything is input; nothing is defaulted from the machine.
 ```
 
 Optional: `homeBase` (default `<userHome>/.paseo-people`), `unixAccountHomeBase` (default `/home`),
-`allowAllInterfaces`, `allowDefaultPort`.
+`allowAllInterfaces`, `allowDefaultPort`, `environmentPath`.
+
+**Set `environmentPath` for `same-user`.** A systemd user unit starts with a minimal `PATH`, so a daemon started from a
+generated unit may not find provider CLIs (claude, codex, git) and its agents would fail for a reason unrelated to
+logins. Copy the `Environment=PATH=...` value from your existing daemon's unit. Entries are absolute directories, or
+start with `%h` (systemd's specifier for the user's home); spaces, quotes, empty entries and any other `%` are
+rejected. It is ignored for `unix-account` units, because the operator's `PATH` does not belong in another user's
+environment.
 
 Rules, enforced at parse time (all errors listed together):
 
