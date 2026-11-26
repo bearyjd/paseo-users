@@ -52,8 +52,8 @@ The identity kernel serves the second mode. The first mode does not depend on it
 
 ## Deployment separation (brief §15)
 
-- Reusable code: this repo (`paseo-users`). Nothing here names Alto, household usernames, paths or addresses; data
+- Reusable code: this repo (`paseo-users`). Nothing here names a host, household usernames, paths or addresses; data
   directory, clock, hasher and stores are injected.
-- Core changes: your fork `bearyjd/paseo`, dedicated feature branch — **not created**; awaiting approval (`07`).
-- Alto-specific configuration: `alto-config` (currently an empty directory) — **untouched**.
-- Running Paseo (host `alto`, port 6767): **not modified**. Probes use temp homes and ephemeral ports.
+- Core changes: a feature branch of the maintainer's fork (`feat/users-admission`) — **created locally, not pushed**; see `05`.
+- Host-specific configuration: belongs in the operator's own private deployment-config repository — **not part of this repo**.
+- Any running Paseo daemon: **never modified**. Probes use temp homes and ephemeral ports.

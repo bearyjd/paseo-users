@@ -3,7 +3,7 @@
 > ## Implementation status (feature branch `feat/users-admission`)
 >
 > Implemented and tested in a separate worktree of your fork, based on upstream `e4dc119df` (v0.17.5). **Local
-> commits only; not pushed, not merged, not running on Alto.** Branch `feat/users-admission`:
+> commits only; not pushed, not merged, not running on any host.** Branch `feat/users-admission`:
 > `82603e703` R1 admission provider + R8 flags · `41352bc96` R2 caller identity · `2cfaa64ed` provider loaded from
 > `PASEO_ADMISSION_MODULE` · `c097d6017` provider-hosted `/api/auth/*` routes.
 >
@@ -18,7 +18,7 @@
 
 
 **Status: R1, R2 and part of R8 are implemented on a local feature branch (see below); everything else is proposal.
-Nothing is deployed to Alto.** Intended as a feature branch of `bearyjd/paseo` rebased
+Nothing is deployed to any host.** Intended as a feature branch of `bearyjd/paseo` rebased
 on current `getpaseo/paseo` main, shaped so it can be offered upstream.
 
 Design principle: extend what upstream already points at. `docs/permissions.md` states the target model

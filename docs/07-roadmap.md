@@ -4,7 +4,7 @@
 
 **Daemon per person under the current Linux user comes first**, then separate Linux users, as two isolation strategies of
 one modular tool (`tools/ctl`, runbook `11-daemon-per-person-runbook.md`). The single-daemon core extension stays as the
-second mode. Applying anything to Alto still needs explicit approval. Sharing a project between two same-user daemons
+second mode. Applying anything to the target host still needs explicit approval. Sharing a project between two same-user daemons
 works at the directory level (probe-verified), not at the session level.
 
 ## Decision recorded (owner, during slice 2 kickoff)
@@ -15,7 +15,7 @@ works at the directory level (probe-verified), not at the session level.
   credentials.
 - **Path A is the direction.** Path B (daemon per Unix account) is shelved; it needs separate provider logins per
   account, which the owner does not want. Approved scope: core branch for R8 + R1 + R2 on a disposable instance only.
-  Still not approved: any change on Alto.
+  Still not approved: any change on the target host.
 - Consequences are recorded in `03-security-architecture.md` §5 and `04-threat-model.md` T19.
 
 ## Original decision framing (superseded by the above)
@@ -26,10 +26,10 @@ Two ways forward; they share the identity kernel built in slice 1.
 
 | | **Path A — core extension** (R1–R8, shared daemon) | **Path B — daemon per Unix account** (no core change) |
 | --- | --- | --- |
-| What you get | One app login, one daemon, shared projects, per-user views | Real isolation now; two daemons on Alto (e.g. `:6767` operator, `:6768` son), each with own uid/home/password/credentials |
+| What you get | One app login, one daemon, shared projects, per-user views | Real isolation now; two daemons on the target host (e.g. `:6767` operator, `:6768` son), each with own uid/home/password/credentials |
 | Cost | R3 is a multi-PR upstream-scale change; fork drift (44 commits behind) | Provisioning tooling + operator runbook; no live shared workspace |
 | Security claim | API-level only until agents are wrapped into per-user accounts/containers | OS-enforced separation |
-| Approval needed for | Modifying fork/core | Creating Unix accounts, systemd user units on Alto (system changes) |
+| Approval needed for | Modifying fork/core | Creating Unix accounts, systemd user units on the target host (system changes) |
 
 **Recommendation.** Do **B first** for the household deployment (it is the only option that satisfies "do not confuse
 application-level separation with OS isolation" today), and pursue **A in stages** (R8 → R1 → R2 first: independent
@@ -46,7 +46,7 @@ authenticated logins and revocation; R3 last) for the community-facing plugin. S
 | 4 | R3/R4/R6/R7: resource scoping, path binding, per-agent MCP tokens, redacted daemon.read; full cross-user acceptance suite | Blocked on slice 2; largest |
 | 5 | Execution layer: workspace → Unix account/rootless Podman mapping via `wrap`; credential-reference broker interface; notifications (R5) | After 4 (or immediately for Path B) |
 | 6 | OIDC / passkeys via `IdentityProvider`; device pairing ↔ user; invitations over QR | Later |
-| B1 | Path B tooling: `paseo-users-ctl` provisioning (create account, systemd user unit, port, password, revoke), runbook in `alto-config` | **Needs approval** (system changes on Alto) |
+| B1 | Daemon-per-person provisioning: `tools/ctl` planner (same-user and unix-account strategies), runbook `11-...` | **Built** (plan/render only, never applied). Applying it to a real host needs approval |
 
 ## MVP acceptance mapping (brief §12)
 
@@ -68,7 +68,7 @@ authenticated logins and revocation; R3 last) for the community-facing plugin. S
 ## Approvals required (none obtained or assumed)
 
 1. ~~Create a feature branch of `bearyjd/paseo` and implement R8/R1/R2 (slice 2).~~ **Approved and done locally** (not pushed; pushing needs a separate OK).
-2. Any change to production authentication on Alto (switching to `users` mode, rotating passwords).
-3. Creating accounts, migrating state, or installing this plugin on Alto's running daemon.
+2. Any change to production authentication on the target host (switching to `users` mode, rotating passwords).
+3. Creating accounts, migrating state, or installing this plugin on the target host's running daemon.
 4. Path B: creating Unix accounts and systemd units; opening additional ports.
 5. Publishing the repository to GitHub (not done; the repo is local only).

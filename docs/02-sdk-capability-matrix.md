@@ -66,6 +66,6 @@ scoping, files/terminals, events, MCP, tokens, schedules) are unchanged: still c
 | One app, one login | Yes | App lists one host per user; a front-door chooses the host |
 | Revoke a user | Disable account, drop sessions | Stop the user's daemon, rotate its password |
 | Where `paseo-users` fits | Plugin + core extension | Directory, provisioning and credential-reference tooling around standard daemons |
-| Fits "father and son on Alto" | Eventually | **Now**, and is the secure baseline for A's agent isolation too |
+| Fits "a two-person household on one host" | Eventually | **Now**, and is the secure baseline for A's agent isolation too |
 
 Recommendation and decision request: `docs/07-roadmap.md` §Decision.

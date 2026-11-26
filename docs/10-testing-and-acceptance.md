@@ -62,8 +62,8 @@ Until 1, 2, 4, 5 and the corresponding disposable-instance tests pass, documenta
 - Provider-mode behaviour with the relay, Hub and connected-host paths beyond reading source.
 
 - Behavior on Paseo versions other than 0.17.4 runtime / 0.17.5 source.
-- Real-world scrypt latency on Alto's CPU (N=2^17 measured ~230 ms on the development machine).
-- Whether plugin processes can read `users.json` by design on Alto (they can; same uid) — covered by T9, not tested.
+- Real-world scrypt latency on the target host's CPU (N=2^17 measured ~230 ms on the development machine).
+- Whether plugin processes can read `users.json` by design on the target host (they can; same uid) — covered by T9, not tested.
 - Relay, Hub and connected-host admission paths beyond reading source.
 - The mobile app's connect flow (needed for R1's sign-in step); not inspected.
 - Windows/macOS file-mode semantics (the store sets POSIX modes only).

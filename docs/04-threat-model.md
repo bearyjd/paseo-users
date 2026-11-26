@@ -13,7 +13,7 @@
 | --- | --- |
 | Remote attacker on the tailnet / LAN | Can reach the daemon port; no credentials. |
 | Stolen device or session token | Holds one user's valid login token. |
-| Malicious or curious **developer** (the son) | Valid developer login; may craft RPCs directly, edit profiles, run agents. |
+| Malicious or curious **developer** (a household member) | Valid developer login; may craft RPCs directly, edit profiles, run agents. |
 | Prompt-injected / compromised **agent** | Code running as whatever uid the agent runs under, with that workspace's env. |
 | Malicious **plugin** | Runs as the daemon uid with owner admission. Out of scope: installing plugins is an operator trust decision. |
 | Operator (administrator) | Trusted; mistakes are in scope. |

@@ -140,13 +140,12 @@ describe("render", () => {
     expect(await mode(join(out, "secrets/bob.password"))).toBe(0o600);
   });
 
-  it("rendered artifacts never contain site-specific or default-daemon strings", async () => {
+  it("rendered artifacts never contain default-daemon strings", async () => {
     const out = await tmp();
     await renderPlan(mixed(), out);
     for (const f of await walk(out)) {
       if (f.startsWith(join(out, "secrets"))) continue;
       const text = await readFile(f, "utf8");
-      expect(text.toLowerCase(), f).not.toContain("alto");
       expect(text, f).not.toContain("6767");
       expect(text, f).not.toContain("/.paseo/");
       expect(text, f).not.toMatch(/\/\.paseo(\s|$)/);

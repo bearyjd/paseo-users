@@ -84,7 +84,7 @@ requests; paseo-users decides. No circular dependency: paseo-users never imports
   5. `/mcp/agents` token bound per agent/principal (R6).
 - **Hosts**: `host` allowances restrict which connected hosts a user may route to. Connected-host links already
   intersect caller grants with link authority.
-- Initial Alto target (rootless Podman, Tailscale): *native* for operator infrastructure, *rootless Podman* per
+- Initial target (rootless Podman, Tailscale): *native* for operator infrastructure, *rootless Podman* per
   user for protected development, *disposable containers* for experimental agents, *KVM* later for strong
   isolation. The data model carries ids for all four; none are provisioned by this plugin.
 

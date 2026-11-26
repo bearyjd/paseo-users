@@ -22,11 +22,11 @@ PASEO_PROBE=1 PASEO_CORE_DIR=<fork worktree> npm run test:probes   # also the co
 - **Never touch a production Paseo.** Do not restart, stop, reload or install into the daemon on port 6767 or read
   `~/.paseo` (it contains credentials). Probes use temp homes and ephemeral ports through `probes/daemon-harness.ts`.
 - **Never run `paseo daemon stop|restart` without an explicit disposable `--home`.**
-- **Do not modify Paseo core, the user's fork, `alto-config`, or any deployment** without explicit user approval.
+- **Do not modify Paseo core, the maintainer's fork, a private deployment-config repository, or any deployment** without explicit user approval.
 - **No stub authentication.** Anything that does not enforce must say `enforcement: "none"`.
 - **Fail closed.** Unknown resource, role, action or missing core capability = deny / grant nothing.
 - **No secrets in the repo, tests, logs or audit records.** Tests use synthetic credentials.
-- Do not hardcode Alto, household usernames, paths or addresses.
+- Do not hardcode host names, usernames, paths or addresses.
 - Do not add runtime dependencies without justification (current: Node built-ins + `zod`).
 
 ## Layout and conventions
