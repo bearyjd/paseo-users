@@ -40,6 +40,14 @@ export class NotFoundError extends Error {
     this.name = "NotFoundError";
   }
 }
+/** The request is malformed (bad username format, unknown role). Distinct from a state conflict. */
+export class InvalidInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidInputError";
+  }
+}
+
 export class ConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -79,6 +87,11 @@ export type LoginResult =
   | { ok: false; reason: "invalid_credentials" }
   | { ok: false; reason: "throttled"; retryAfterMs: number };
 
+export interface RevokedSession {
+  userId: string;
+  sessionId: string;
+}
+
 export interface LoginInput {
   username: string;
   password: string;
@@ -108,6 +121,7 @@ export class UsersKernel {
   private readonly accountThrottle: FailureThrottle;
   private readonly addressThrottle: FailureThrottle;
   private readonly lastTouch = new Map<string, number>();
+  private readonly revocationListeners = new Set<(revoked: RevokedSession[]) => void>();
   /** Verified against when the account does not exist, so response time does not reveal usernames. */
   private dummyHash: Promise<string> | null = null;
 
@@ -119,6 +133,16 @@ export class UsersKernel {
     this.config = { ...DEFAULT_KERNEL_CONFIG, ...deps.config };
     this.accountThrottle = new FailureThrottle(this.config.accountThrottle, deps.clock);
     this.addressThrottle = new FailureThrottle(this.config.addressThrottle, deps.clock);
+  }
+
+  /**
+   * Called after login sessions are revoked (logout, admin revoke, disable, delete, role or password
+   * change). An integration uses it to close live connections that were admitted with those
+   * sessions. Listener errors are swallowed: revocation must not depend on a subscriber.
+   */
+  onSessionsRevoked(listener: (revoked: RevokedSession[]) => void): () => void {
+    this.revocationListeners.add(listener);
+    return () => this.revocationListeners.delete(listener);
   }
 
   // ---------------------------------------------------------------- first run
@@ -710,7 +734,7 @@ export class UsersKernel {
   }
 
   private assertUsername(username: string): void {
-    if (!USERNAME_PATTERN.test(username)) throw new ConflictError("invalid username");
+    if (!USERNAME_PATTERN.test(username)) throw new InvalidInputError("invalid username");
   }
 
   private require(actor: Principal, permission: Parameters<typeof has>[1]): void {
@@ -736,7 +760,7 @@ export class UsersKernel {
   private assertAssignable(data: StoreData, actor: Principal, roleIds: readonly string[]): void {
     this.require(actor, "roles.manage");
     const known = new Set(data.roles.map((r) => r.id));
-    if (roleIds.length === 0 || roleIds.some((id) => !known.has(id))) throw new ConflictError("unknown role");
+    if (roleIds.length === 0 || roleIds.some((id) => !known.has(id))) throw new InvalidInputError("unknown role");
     for (const permission of permissionsForRoles(data, roleIds)) {
       if (!actor.permissions.has(permission)) throw new ForbiddenError("cannot grant permissions you do not hold");
     }
@@ -763,21 +787,34 @@ export class UsersKernel {
     return inv;
   }
 
+  private notifyRevoked(revoked: RevokedSession[]): void {
+    if (revoked.length === 0) return;
+    for (const listener of this.revocationListeners) {
+      try {
+        listener(revoked);
+      } catch {
+        // a broken subscriber must never undo or delay a revocation
+      }
+    }
+  }
+
   private async revokeSessions(match: (s: LoginSession) => boolean, reason: string, actorId: string): Promise<number> {
     const now = this.clock.now().toISOString();
-    const revoked: string[] = [];
+    const revoked: RevokedSession[] = [];
     await this.store.transact((data) => {
       for (const session of data.sessions) {
         if (!session.revokedAt && match(session)) {
           session.revokedAt = now;
           session.revokedReason = reason;
-          revoked.push(session.id);
+          revoked.push({ userId: session.userId, sessionId: session.id });
         }
       }
     });
-    for (const id of revoked) {
-      this.lastTouch.delete(id);
-      await this.audit.record("auth.session.revoked", { actorId, targetId: id, detail: { reason } });
+    // Notify before auditing: closing live connections is the time-critical part.
+    this.notifyRevoked(revoked);
+    for (const { sessionId } of revoked) {
+      this.lastTouch.delete(sessionId);
+      await this.audit.record("auth.session.revoked", { actorId, targetId: sessionId, detail: { reason } });
     }
     return revoked.length;
   }
