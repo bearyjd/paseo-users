@@ -1,11 +1,23 @@
 # 11 — Daemon per person: provisioning runbook
 
-## NOT YET EXERCISED ON A REAL HOST
+## Status of real-host testing
 
-Read this first. The planner in `tools/ctl/` is covered by unit tests (`test/ctl/`) that use temp directories and a
-fake command runner. **It has never been applied to a real machine.** No systemd unit, account, linger setting or
-provider login described here has been run. Every claim about host behaviour is listed under "Unverified" below.
-Treat the first run as an experiment: apply by hand, one person at a time, and check each step.
+**One real run so far**, `same-user`, one extra daemon, on Ubuntu 24.04 with a systemd user manager and linger already
+on. The rendered plan was applied by hand, step by step, after reading `apply.sh`. Observed:
+
+- The unit installed, passed `systemd-analyze --user verify`, started with `systemctl --user enable --now`, stayed
+  active, and listened on its own address and port. `NoNewPrivileges=yes` and `PrivateTmp=yes` did not stop it starting.
+- The password from the 0600 `EnvironmentFile` was honoured: the right password was admitted, a wrong one rejected.
+- Its project list was empty and independent of the existing daemon, and its local-models directory was under its own
+  `PASEO_HOME`, not the existing one.
+- Claude, Codex and OpenCode all reported `ready` with their model catalogs, so the daemon sees the provider CLIs when
+  `environmentPath` matches the existing unit's `PATH`.
+- The existing daemon kept running, unchanged.
+- Cost: about 1 GB resident while starting (peak 1.7 GB), then roughly 270 MB for the daemon process.
+
+**Still not exercised:** an actual agent turn through the second daemon (a `ready` status is not proof that the logins
+work; only a turn is), the app adding the second daemon as a host, restart and boot persistence, `unix-account` mode,
+and revocation. Treat each as unverified until done. Apply by hand, one person at a time, and check each step.
 
 ## What this is
 
@@ -182,20 +194,16 @@ Revoking does not remove the person's host entry in their app; it stops answerin
 
 None of these have been exercised on a real host. Check each before relying on it.
 
-- **LLM login sharing** (`same-user`): that Claude, Codex and other provider CLIs launched by a user-unit daemon find
+- **LLM login sharing** (`same-user`): that an agent turn works, beyond the providers reporting `ready`. That Claude, Codex and other provider CLIs launched by a user-unit daemon find
   their logins in the user's home exactly as they do from your shell, and that two daemons using one login at once
   work (token refresh, rate limits, session files). Per provider.
 - **API keys** (`unix-account`): which environment variables each provider reads, and that `.paseo-provider.env` is
   enough in place of a login.
 - **Systemd hardening in a user unit**: `NoNewPrivileges=yes` and `PrivateTmp=yes` taking effect (and not breaking
-  agents that use `/tmp`) under `systemd --user`. `ProtectHome` is deliberately not used.
+  agents that use `/tmp`) under `systemd --user`. The daemon starts with them; that agents still work is untested. `ProtectHome` is deliberately not used.
 - **Linger**: `loginctl enable-linger` starting user managers at boot and keeping daemons alive after logout, and
   `systemctl --machine=<acct>@.host --user ...` reaching another account's manager.
 - **Stopping a unit ends agent processes** the daemon started (control-group kill); `loginctl terminate-user` for accounts.
-- **`PASEO_PASSWORD` delivered by a systemd `EnvironmentFile`** to a long-running daemon. (The same variable passed as a
-  plain environment variable is verified, see below.)
-- The unit's `ExecStart` running under `systemctl --user` (the command itself, `daemon run --home <path>`, is verified as a
-  plain process).
 - The app adding several hosts on different ports of one address.
 
 Verified by probes on disposable daemons (`PASEO_PROBE=1 npm run test:probes`, installed Paseo 0.17.4, temp homes, loopback):
