@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:probes": "vitest run --config vitest.probes.config.ts",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "build": "tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.17.4",
