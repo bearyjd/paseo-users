@@ -1,0 +1,34 @@
+{
+  "name": "paseo-users",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Multi-user authentication and access management for Paseo (identity + authorization kernel, Paseo plugin, core-extension requirements).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "LICENSE",
+    "paseo-plugin.json",
+    "index.server.ts",
+    "server",
+    "shared",
+    "docs"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:probes": "vitest run --config vitest.probes.config.ts",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.17.4",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0",
+    "ws": "^8.23.0",
+    "zod": "^4.4.3"
+  }
+}

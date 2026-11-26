@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.vitest-cache/
+.test-tmp/
+*.log
+*.tgz
+# never commit local state, credentials or deployment config
+.env
+.env.*
+*.pem
+*.key
+id_*
+users-data/
+paseo-home/
