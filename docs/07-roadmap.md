@@ -1,6 +1,17 @@
 # 07 — MVP implementation plan and roadmap
 
-## Decision needed before slice 2
+## Decision recorded (owner, during slice 2 kickoff)
+
+- **One daemon, shared LLM accounts.** Both people use the *same* provider logins (the daemon's configured
+  Claude/Codex/etc. accounts). A paseo-users user is a **super-profile**: identity + per-user view (projects,
+  sessions, preferences) + allowances over those shared providers. No per-user Unix accounts, no per-user provider
+  credentials.
+- **Path A is the direction.** Path B (daemon per Unix account) is shelved; it needs separate provider logins per
+  account, which the owner does not want. Approved scope: core branch for R8 + R1 + R2 on a disposable instance only.
+  Still not approved: any change on Alto.
+- Consequences are recorded in `03-security-architecture.md` §5 and `04-threat-model.md` T19.
+
+## Original decision framing (superseded by the above)
 
 The research shows the brief's MVP (items 4, 5, 8: each user sees only their own sessions; direct RPC cannot bypass)
 cannot be met by a plugin alone, and that same-uid execution defeats application-level separation (matrix row 18).

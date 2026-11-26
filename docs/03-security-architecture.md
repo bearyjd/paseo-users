@@ -103,3 +103,17 @@ Out of scope for the MVP implementation, specified so nothing blocks it:
 Append-only JSON Lines (mode 0600): logins (success, failure, throttled), logouts, revocations, password
 changes/resets, user and role changes, invitations, project sharing, allowances, authorization denials and admin
 overrides, migrations. Never records passwords, tokens or hashes (test-enforced).
+
+## 8. Shared LLM accounts (owner decision)
+
+Users share the daemon's provider logins. A `provider` allowance means "this user may use the daemon's configured
+provider X"; it is not a credential and nothing per-user is stored. Consequences:
+
+- Per-user cost/usage attribution comes from session ownership and the audit log, not from separate accounts.
+  Per-user usage limits would be enforced by paseo-users (counting sessions/turns), not by the provider.
+- Provider tokens live where the provider CLIs keep them (e.g. under the daemon user's home). Any agent can read
+  them. Sharing them is intended; the risk is that the same readable home also holds the operator's other files. For
+  isolation without per-user accounts, run workspaces in **rootless containers that mount only the provider token
+  directories read-only** (the Podman route in §5), not separate Unix accounts.
+- Other credentials (SSH, GitHub, MCP) remain references with explicit per-user allowances; they are not shared by
+  default.

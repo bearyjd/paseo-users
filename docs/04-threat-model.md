@@ -49,6 +49,7 @@ need core work (`05`) and OS isolation (`03` §5). Until then the honest stateme
 | T15 | Revocation lag | Principal resolved per request from store; sessions revoked in the same transaction. | Daemon must close live sockets (R1); cached `Principal` objects are the caller's responsibility. |
 | T16 | Downgrade/rollback abuse | Newer-schema stores refused; migrations transactional with backup restore. | Operator running an old build must restore the backup deliberately. |
 | T17 | Malicious plugin | Out of scope (operator trust). | Plugins are unsandboxed; document. |
+| T19 | **Shared LLM provider tokens readable by any agent** (owner decision to share accounts) | Provider access is an explicit allowance; usage attributed via session ownership and audit. | Tokens are not per-user secrets. Contain with rootless containers mounting only provider token dirs read-only; a hostile developer can still exfiltrate them. Household trust only. |
 | T18 | Relay/pairing links as credentials | n/a here. | A pairing link is the shared daemon password; in topology A it must stop granting owner (R1). |
 
 ## Non-goals (stated so nobody assumes them)
