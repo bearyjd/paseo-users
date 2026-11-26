@@ -21,7 +21,8 @@
     "test": "vitest run",
     "test:probes": "vitest run --config vitest.probes.config.ts",
     "check": "npm run typecheck && npm test",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "ctl:build": "tsc tools/ctl/bin.ts --rootDir tools --outDir dist/tools --target ES2022 --module ESNext --moduleResolution Bundler --lib ES2023 --types node --strict --noUncheckedIndexedAccess --skipLibCheck --verbatimModuleSyntax"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.17.4",

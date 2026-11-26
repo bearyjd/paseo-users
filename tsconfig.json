@@ -12,5 +12,5 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["index.server.ts", "server", "shared", "test", "probes", "*.ts"]
+  "include": ["index.server.ts", "server", "shared", "test", "probes", "tools", "*.ts"]
 }
