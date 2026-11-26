@@ -34,6 +34,14 @@ Legend: ✅ plugin-only · 🟡 plugin + small core change · 🔴 core change r
 | 20 | External IdP (OIDC, passkeys) | ✅ (design) | `ExternalIdentity` table and `IdentityProvider` seam in the kernel; implement later. | — |
 | 21 | Profiles integration | ✅ | Read-only versioned context + deny-by-default evaluator (`08-…`). | — |
 
+## 1b. Status on the `feat/users-admission` core branch
+
+Rows 2, 3, 4(partial), 6, 7 and 14(partial) move from 🔴/🟡 to **done on the branch**: admission provider (R1), caller
+identity in plugin handlers (R2), live revoke and narrowing. Row 4 is only partly closed: plugin RPC still requires
+`daemon.manage`, so developer self-service lives in the provider's `/api/auth/*` instead. Rows 8–13 (resource
+scoping, files/terminals, events, MCP, tokens, schedules) are unchanged: still core work (R3–R7). Details in
+`05-core-extension-requirements.md`.
+
 ## 2. Reading the matrix
 
 - **Rows 2, 3, 8 are the blockers.** Without admission (2) there is no authenticated user; without caller

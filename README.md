@@ -4,7 +4,11 @@ Multi-user authentication and access management for [Paseo](https://paseo.sh): a
 per-user project/session authorization and a versioned contract for the Profiles plugin. Self-hosted, no cloud or
 external identity provider required. Apache-2.0.
 
-> ## ⚠️ Status: pre-release. This does **not** yet protect a running daemon.
+> ## ⚠️ Status: pre-release. Not deployed, and not a boundary for developers yet.
+>
+> On the local core branch (`feat/users-admission`, not pushed) administrators sign in as distinct principals and
+> the shared-password bypass is closed. **Developer accounts are refused** until core can scope resources.
+> Against stock Paseo, installing the plugin enforces nothing.
 >
 > Paseo today admits one shared principal (`owner`) with every permission, plugin RPC handlers receive no caller
 > identity, and no handler checks resource ownership. A plugin cannot fix any of that. What exists here is the
@@ -26,7 +30,7 @@ external identity provider required. Apache-2.0.
 - Admin-managed allowances for profiles, sandboxes, providers, credential **references**, hosts.
 - Fail-closed mapping to Paseo daemon permissions; read-only Profiles context + deny-by-default request evaluator.
 - JSON store with atomic writes, 0600 files, migration with backup and rollback.
-- 74 unit tests; 10 probes against a disposable daemon confirming the blockers and that the plugin loads.
+- 90 unit tests; 21 probes: blockers on stock Paseo, plugin load, and 11 end-to-end checks on a daemon built from the core branch.
 
 ## What does not work yet
 

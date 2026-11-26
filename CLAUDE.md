@@ -12,7 +12,9 @@ Guidance for AI coding agents working in this repository. (`AGENTS.md` is identi
 npm run typecheck          # always after changes
 npm test                   # unit tests (fast; real scrypt with cheap params)
 npm run check              # both
+npm run build                       # emit dist/ (the daemon loads dist/server/admission-entry.js)
 PASEO_PROBE=1 npm run test:probes   # disposable-daemon probes (needs `paseo` on PATH)
+PASEO_PROBE=1 PASEO_CORE_DIR=<fork worktree> npm run test:probes   # also the core-branch end-to-end
 ```
 
 ## Hard rules

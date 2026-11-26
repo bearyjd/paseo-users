@@ -1,7 +1,24 @@
 # 05 — Upstream integration requirements (minimal core extension)
 
-**Status: proposal. Nothing in this document has been implemented in Paseo core, in your fork, or on Alto.
-Implementation needs your approval** (see `07-roadmap.md`). Intended as a feature branch of `bearyjd/paseo` rebased
+> ## Implementation status (feature branch `feat/users-admission`)
+>
+> Implemented and tested in a separate worktree of your fork, based on upstream `e4dc119df` (v0.17.5). **Local
+> commits only; not pushed, not merged, not running on Alto.** Branch `feat/users-admission`:
+> `82603e703` R1 admission provider + R8 flags · `41352bc96` R2 caller identity · `2cfaa64ed` provider loaded from
+> `PASEO_ADMISSION_MODULE` · `c097d6017` provider-hosted `/api/auth/*` routes.
+>
+> | Req | Status | Notes / deviations from the proposal below |
+> | --- | --- | --- |
+> | R1 | **Done** | `AdmissionProvider` (`authenticate`, `http`, `subscribe`). `hello.auth` gains `{kind:"credential"}`. With a provider the shared password and a missing credential admit nobody; the local credential still admits the operator (CLI works). Header-bearer path goes through the provider. Revoke closes live sockets, narrowing applies live. Daemon refuses to start in provider mode without an operator password (HTTP/MCP depend on it) or if the module cannot load. **Deviation:** the pre-auth hook is a general provider-hosted `/api/auth/*` handler, not a single `login`, because the provider must be the only writer of its state. Provider is loaded from env `PASEO_ADMISSION_MODULE` only (no `config.json` field yet). |
+> | R2 | **Done** | `context.caller = {principalId, permissions}` for RPC and subscription handlers, derived from the session, never from input. Per-RPC permission declaration was **not** added; plugin RPC still needs `daemon.manage`. |
+> | R8 | **Partial** | `principalAdmission` and `pluginCallerIdentity` advertised. `resourceScopedGrants` and `redactedDaemonRead` do not exist yet. |
+> | R3, R4, R5, R6, R7 | **Not started** | Resource scoping, path binding, push, per-agent MCP tokens, redacted `daemon.read`. Until R3/R7, developer accounts are **not admitted** (fail closed). |
+>
+> Verified by 5 new test files in core (admission resolver, transport e2e, plugin caller e2e, module loader, env config; 30 tests) plus the 40 existing auth/admission tests re-run unchanged, `tsc`, and `oxlint`/`oxfmt`. The paseo-users provider is verified against a real daemon built from the branch (`probes/core-branch.probe.ts`).
+
+
+**Status: R1, R2 and part of R8 are implemented on a local feature branch (see below); everything else is proposal.
+Nothing is deployed to Alto.** Intended as a feature branch of `bearyjd/paseo` rebased
 on current `getpaseo/paseo` main, shaped so it can be offered upstream.
 
 Design principle: extend what upstream already points at. `docs/permissions.md` states the target model

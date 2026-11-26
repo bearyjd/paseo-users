@@ -7,7 +7,8 @@
 | Unit / kernel | `npm test` | In-memory and temp-dir stores, real scrypt (cheap params + one production-param test), fake clock | ✔ |
 | Typecheck | `npm run typecheck` | `tsc --noEmit`, strict + `noUncheckedIndexedAccess` | ✔ |
 | Probes | `PASEO_PROBE=1 npm run test:probes` | **Disposable daemon** (temp `PASEO_HOME`, loopback ephemeral port, relay off, synthetic password, no agents): blocker confirmation + plugin-load check; plus a static SDK check | daemon probes opt-in (need a Paseo install); the static SDK check always runs |
-| Core acceptance (future) | to be added in slice 2/4 | Disposable daemon built from the core-extension branch | after slice 2 |
+| Core-branch end-to-end | `PASEO_PROBE=1 PASEO_CORE_DIR=<worktree> npm run test:probes` (after `npm run build` here and the server build there) | **Real daemon built from `feat/users-admission`** loading this provider via `PASEO_ADMISSION_MODULE`, driven over HTTP and WebSocket (`probes/core-branch.probe.ts`, 11 tests) | opt-in |
+| Core unit/e2e (in the fork) | `npx vitest run <file>` per Paseo's rules | In-process daemon with a fake provider | fork CI (not run) |
 
 Safety rules for any test touching a daemon: temp home only; never port 6767; never `paseo daemon stop/restart`
 without an explicit disposable `--home`; synthetic credentials; teardown kills only the spawned process group.
@@ -27,7 +28,7 @@ Status: ✔ implemented and passing · ◐ kernel-level only (daemon enforcement
 | Privilege escalation | ✔ | `authz.test.ts` (self-promotion, delegation, takeover, last admin) |
 | Cross-user session access | ◐ | `authz.test.ts` decisions; daemon handlers don't call them (R3) |
 | Cross-user project access | ◐ | same |
-| Direct RPC authorization bypass | **✘ confirmed bypass** | `probes/blockers.probe.ts` demonstrates the blocker |
+| Direct RPC authorization bypass | ◐ | Against the installed 0.17.4 daemon the bypass is confirmed (`blockers.probe.ts`). On the branch: shared password, header bearer, anonymous and forged tokens are rejected (`core-branch.probe.ts`). Not covered: same-uid agent reading `local-credential`, shared `/mcp/agents` token |
 | Unauthorized WebSocket subscriptions | ✘ | needs R3 outbound filtering; probe shows global visibility |
 | Unauthorized terminal and file access | ✘ | probe shows arbitrary-`cwd` file listing; needs R4 |
 | Unauthorized profile and sandbox selection | ✔ (decision) | `context-and-mapping.test.ts` |
@@ -55,6 +56,10 @@ Until 1, 2, 4, 5 and the corresponding disposable-instance tests pass, documenta
 **does not provide secure multi-tenancy**.
 
 ## Unverified (honest list)
+
+- The core branch was verified with scoped installs of the server workspaces only. The full upstream suite, the app, the CLI package (its build failed here on a `commander` typings mismatch caused by the scoped install) and the desktop shell were **not** run. Run Paseo CI before any PR.
+- Open sockets outlive login-token idle expiry: the token is checked at connect and on API calls, not on every frame. Revocation (disable, logout, admin revoke) closes sockets; plain expiry does not.
+- Provider-mode behaviour with the relay, Hub and connected-host paths beyond reading source.
 
 - Behavior on Paseo versions other than 0.17.4 runtime / 0.17.5 source.
 - Real-world scrypt latency on Alto's CPU (N=2^17 measured ~230 ms on the development machine).
