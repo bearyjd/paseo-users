@@ -1,0 +1,6 @@
+{
+  "id": "paseo-users",
+  "name": "Paseo Users",
+  "description": "Multi-user authentication and access management (pre-release: identity kernel only; reports enforcement status, enforces nothing).",
+  "requirements": { "paseo": ">=0.17.4 <0.18.0" }
+}
