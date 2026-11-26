@@ -5,6 +5,10 @@ All notable changes. Format follows Keep a Changelog; versions follow SemVer onc
 ## [Unreleased]
 
 ### Added
+- `tools/ctl`: provisioning planner for the daemon-per-person mode with pluggable isolation strategies
+  (`same-user`, `unix-account`). Plans and renders only; `apply` needs two explicit flags and uses an injected runner.
+  Runbook `docs/11-daemon-per-person-runbook.md`. 64 tests.
+- Probe: two same-user daemons keep separate registries and passwords and can share a directory.
 - Daemon-facing admission provider (`server/admission.ts`): per-login-session principals, provider-hosted
   `/api/auth/*` account API (login, logout, me, sessions, create user, disable, revoke), fail-closed developer
   handling, revoke events. First-run `init` and `PASEO_ADMISSION_MODULE` entry; `npm run build` emits `dist/`.

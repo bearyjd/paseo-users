@@ -17,6 +17,7 @@ Read in this order: `01` current Paseo auth → `02` capability matrix → `03` 
  index.server.ts         plugin entry: one read-only RPC. No account-mutating RPC until caller identity exists (R2)
  paseo-plugin.json       plugin manifest
  client/                 (slice 3) mobile-first admin/account UI using @getpaseo/plugin/client/ui — not yet written
+ tools/ctl/               Provisioning planner for the daemon-per-person mode (plans and renders; never executes by default)
  probes/                 disposable-daemon verification (opt-in)
  test/                   unit tests
  docs/                   findings, threat model, requirements, roadmap
@@ -28,6 +29,15 @@ imports is what lets one security core serve topology A (core extension) and top
 
 The plugin directory conventions are Paseo's: only `index.*`, `server/`, `shared/`, `client/` hold code in the plugin
 root, and server code never imports client code. `test/` and `probes/` are not loaded by the plugin compiler.
+
+## Two modes, one package
+
+| Mode | What it is | Needs core changes | Status |
+| --- | --- | --- | --- |
+| **Daemon per person** (priority) | One Paseo daemon per person, each with its own `PASEO_HOME`, port and password. Isolation strategy per person: `same-user` (shared Linux user and LLM logins, data separation only) or `unix-account` (own Linux user, OS isolation, separate LLM logins). Provisioned by `tools/ctl`, runbook `11-...` | **No** | Planner built and tested; never applied to a real host |
+| **Single daemon, many users** | One daemon, one login, per-user visibility, via the identity kernel and a core admission provider | **Yes** (`feat/users-admission`, local) | Administrators only; developers refused until resource scoping exists |
+
+The identity kernel serves the second mode. The first mode does not depend on it.
 
 ## Separation of concerns
 

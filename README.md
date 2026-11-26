@@ -20,6 +20,13 @@ external identity provider required. Apache-2.0.
 > account can read each other's files; real isolation needs separate accounts, containers or VMs.
 > See `docs/02-sdk-capability-matrix.md` and `docs/04-threat-model.md`.
 
+## Two modes
+
+1. **Daemon per person** (priority, no core changes): one Paseo daemon per person on the same host, either under your
+   current Linux user (shared LLM logins, data separation only) or under separate Linux users (OS isolation). Plan and
+   render with `tools/ctl`; see `docs/11-daemon-per-person-runbook.md`. Never applied to a real host yet.
+2. **Single daemon, many users** (needs core changes): the identity kernel below plus the `feat/users-admission` core branch.
+
 ## What works now
 
 - Accounts with scrypt password hashes; admin-created accounts, invitations and admin-assisted resets.

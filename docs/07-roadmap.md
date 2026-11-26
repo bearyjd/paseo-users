@@ -1,5 +1,12 @@
 # 07 — MVP implementation plan and roadmap
 
+## Priority update (owner, later)
+
+**Daemon per person under the current Linux user comes first**, then separate Linux users, as two isolation strategies of
+one modular tool (`tools/ctl`, runbook `11-daemon-per-person-runbook.md`). The single-daemon core extension stays as the
+second mode. Applying anything to Alto still needs explicit approval. Sharing a project between two same-user daemons
+works at the directory level (probe-verified), not at the session level.
+
 ## Decision recorded (owner, during slice 2 kickoff)
 
 - **One daemon, shared LLM accounts.** Both people use the *same* provider logins (the daemon's configured
