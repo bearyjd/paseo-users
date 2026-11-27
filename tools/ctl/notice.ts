@@ -44,7 +44,9 @@ export function renderNotice(person: Pick<PlanPerson, "name" | "isolation" | "in
       "",
       "Your Paseo runs under its own computer account, with its own installs. Nothing is borrowed from the owner's account:",
       "",
-      "- Your own computer account: your files are not readable from the owner's account, and the owner's files are not readable from yours.",
+      // UNVERIFIED on a real host: setup only gives the account its own private home. It does not change the owner's
+      // permissions, and the owner's side is a manual check after setup, so no promise is made about the owner's files.
+      "- Your own computer account, with its own private home directory. That the two accounts cannot read each other's files is checked by the owner, by hand, after setup; this page does not promise it.",
       "- Your own installs: Paseo and the provider tools below are installed for your account alone.",
       `- Your own provider logins, for ${providers.join(", ")}: you sign in to each of them yourself, as your own account. Nothing is copied from anyone else, so usage and limits are yours.`,
       "- Your own history: the conversations those provider tools save belong to your account only.",

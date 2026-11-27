@@ -312,7 +312,8 @@ function accountDirSteps(person: Person, ctx: ResolvedConfig, root: RootStep): S
 /**
  * Checks that run just before root writes the env file and the unit into the account home: every path root's `install`
  * would resolve through must not be a symlink. Account code cannot have replaced one on a first apply, because the
- * installs run after these writes. On a hand-run re-apply the account may have, so these refuse it. A check cannot
+ * installs run after these writes. If the steps are run again by hand (the CLI's `apply` cannot: it stops at the non-idempotent
+ * useradd) the account may have, so these refuse it. A check cannot
  * close a race with a running account process: root's `install` is still not symlink-safe (household-level trust,
  * docs/04-threat-model.md T20). UNVERIFIED on a real host.
  */

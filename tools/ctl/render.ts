@@ -3,7 +3,7 @@ import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises
 import { dirname, resolve, sep } from "node:path";
 import { passphraseProblem } from "./passphrase.js";
 import type { Plan } from "./plan.js";
-import { secretSourceRel, shellQuote, stepArgv } from "./shell.js";
+import { runsAsAccount, secretSourceRel, shellQuote, stepArgv } from "./shell.js";
 
 export interface RenderOptions {
   /** Person names whose password is regenerated, or "all". Plan.rotate is always honoured too. */
@@ -59,7 +59,10 @@ export function renderApplyScript(plan: Plan): string {
       lines.push(`# (manual, not run by this script)`, "");
       continue;
     }
-    lines.push(`if [ "$phase" = ${phase} ]; then ${argv.map(shellQuote).join(" ")}; fi`, "");
+    // A command that runs as another account leaves the render directory (which may be under the operator's home) in a
+    // subshell, like the CLI runner does. Staged `install` sources stay relative to the render directory.
+    const command = argv.map(shellQuote).join(" ");
+    lines.push(`if [ "$phase" = ${phase} ]; then ${runsAsAccount(argv) ? `(cd / && ${command})` : command}; fi`, "");
   }
   lines.push("# Checks to run by hand afterwards (not run by this script):");
   for (const s of plan.verify) {

@@ -15,6 +15,13 @@ export function fileSourceRel(destPath: string): string {
 }
 
 /**
+ * True for a command that runs as another account (the `runuser` wrapper). Such a command must not start in the render
+ * directory, which may sit under the operator's home: `env -i` clears variables but not the working directory.
+ * The CLI runner and the generated apply.sh both use this, so the two paths cannot disagree.
+ */
+export const runsAsAccount = (argv: readonly string[]): boolean => argv[0] === "runuser";
+
+/**
  * The one place a file/dir/command step becomes an argv. Sources are relative to the rendered output directory.
  * Manual steps have no command. `install` is used so mode and owner are set at creation time.
  */

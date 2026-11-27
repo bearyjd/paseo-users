@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Plan } from "./plan.js";
-import { fileSourceRel, secretSourceRel, stepArgv } from "./shell.js";
+import { fileSourceRel, runsAsAccount, secretSourceRel, stepArgv } from "./shell.js";
 
 export interface CommandRunner {
   /** Runs one argv (no shell) with the output directory as cwd, or "/" for a command that runs as another account. Never called by tests with a real implementation. */
@@ -83,7 +83,7 @@ export async function applyPlan(plan: Plan, outDirInput: string, runner: Command
     result.commands.push(argv);
     // Staged sources are relative to the output directory. A command that runs as an account must not start there: the
     // directory may sit under the operator's home, and env -i does not change the working directory.
-    const { code } = await runner.run(argv, { cwd: argv[0] === "runuser" ? "/" : outDir });
+    const { code } = await runner.run(argv, { cwd: runsAsAccount(argv) ? "/" : outDir });
     if (code !== 0) {
       result.ok = false;
       result.failed = { id: step.id, code };

@@ -181,8 +181,8 @@ describe("account home must not overlap the operator's home", () => {
     fails(rawCfg({ userHome: "/home/tester", homeBase: "/srv/x", unixAccountHomeBase: "/srv/x", paseoVersion: VERSION, people: [sep({ unixAccount: "y" })] }), /ann: account home .*homeBase/);
   });
 
-  it("applies to unix-account people without install too", () => {
-    fails(rawCfg({ people: [{ name: "ann", isolation: "unix-account", unixAccount: "tester" }] }), /ann: account home .*userHome/);
+  it("does not apply to unix-account people without install: they keep today's behaviour", () => {
+    expect(() => parseConfig(rawCfg({ people: [{ name: "ann", isolation: "unix-account", unixAccount: "tester" }] }))).not.toThrow();
   });
 
   it("accepts a disjoint account home, including a sibling with a shared name prefix", () => {
@@ -248,8 +248,9 @@ describe("legacy unix-account config (no install field)", () => {
     );
   });
 
-  it("still rejects an account home overlapping userHome", () => {
-    fails(rawCfg({ people: [{ name: "ann", isolation: "unix-account", unixAccount: "tester" }] }), /ann: account home .*userHome/);
+  it("does not check the account home against userHome (only a separate install does)", () => {
+    expect(() => parseConfig(rawCfg({ people: [{ name: "ann", isolation: "unix-account", unixAccount: "tester" }] }))).not.toThrow();
+    fails(rawCfg({ paseoVersion: VERSION, people: [sep({ unixAccount: "tester" })] }), /ann: account home .*userHome/);
   });
 });
 

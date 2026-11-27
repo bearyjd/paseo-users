@@ -47,7 +47,7 @@ A value flag may be given once. A repeated flag (for example two `--providers`) 
 | `init [--from f] [--listen a] [--port n] [--existing name:port]... [--paseo-binary p] [--path P] [--web-ui] [--force]` | Create the config. Refuses to overwrite without `--force`. | No |
 | `add <name> --shared [--port n] [--acknowledge-shared-history]` | Add a same-user person. | No |
 | `add <name> --separate --unix-account <acct> --providers <id,id> [--paseo-version x.y.z] [--port n]` | Add a person with their own computer account and own installs ([12](12-separate-installs-plan.md)). Nothing defaults: account, providers and an exact version are required (the version may be left out once one is stored; a different one is refused). The result is validated before anything is written; a refusal exits 2 and leaves the config as it was. Providers: `claude`, `codex`, `opencode`. The person logs in to each provider by hand. **UNVERIFIED on a real host.** | No |
-| `remove <name>` | Remove from the config only. Run `revoke` first if they were ever applied. Also deletes that name's staged password files (`secrets/<name>.*`) in the default render directory, so a later person with the same name gets a new password; delete them yourself in any `--out` directory you rendered into. `add` does the same for its name. | No |
+| `remove <name>` | Remove from the config only. Run `revoke` first if they were ever applied. Also deletes that name's staged password files (`secrets/<name>.*`) in the default render directory, so a later person with the same name gets a new password; delete them yourself in any `--out` directory you rendered into. `add` does the same for its name. Only the default config does this: with another `--config` file the default render directory is left alone. `init --force` does it for every name that is gone from the replaced config or is now a different kind of person (another account or mode). Removing someone writes the auto-assigned port of the people after them into the config, so their ports do not move. `add` refuses a `--port` that would move an earlier person's port (exit 2, config unchanged). | No |
 | `list [--json]` | People, mode (`shared`, `separate`, or `unix-account` for a host-binary account), port and `systemctl --user is-active paseo-<name>.service`. Anything it cannot tell is `unknown`. | No (read-only) |
 | `plan [name] [--json]` | Show the plan. With a name: that person's steps plus the `same-user.` prerequisites, still validated against everyone. | No |
 | `render [--out d] [--rotate name\|all]` | Write the plan, `apply.sh`, units, secrets and `notice-<name>.md`. | No |
@@ -61,7 +61,9 @@ A value flag may be given once. A repeated flag (for example two `--providers`) 
 
 The older form still works exactly as before: `plan|render|revoke-plan|apply <config.json> ...` (the first argument is a
 file name; a person name never contains `.` or `/`, so the two cannot be confused). `render <config.json>` now also
-writes the notice pages. A separate person's page says: own computer account, own installs, own provider logins for the listed providers, own history. It names no host, path, address, port, account or version.
+writes the notice pages. A separate person's page says: own computer account with a private home, own installs, own provider logins for the listed providers, own history. It makes no promise about the owner's files (that check is by hand, after setup; UNVERIFIED on a real host). It names no host, path, address, port, account or version.
+
+`apply <config.json>` applies the whole plan and takes no person name: a trailing name is refused (exit 2) instead of being ignored. To apply one person, use the stored config and `apply <name>`.
 
 ## Where files live
 
@@ -89,7 +91,8 @@ existing same-user people who gain their first neighbour from this `add`, and sa
   `" ' \ $ %` (these are special in systemd environment files). It is never taken from arguments or the environment and
   is never printed. Later `render` runs keep it. Whether the daemon accepts every allowed character is UNVERIFIED.
 - Both only rewrite files in the render directory. The daemon keeps the old password until you install the
-  `secrets/<name>.env` file and restart it; the command prints those exact steps.
+  `secrets/<name>.env` file and restart it; the command prints those exact steps. For a same-user person it also offers
+  `apply <name>`; for a unix-account person it does not, because a second `apply` stops at `useradd`.
 
 The passphrase sits in plaintext in a 0600 file, like generated passwords (see the runbook).
 

@@ -99,7 +99,9 @@ Verified by unit tests only (`test/ctl/review-fixes.test.ts`, `test/ctl/separate
   refused (render again and review).
 - A separate account home may not equal, contain or sit inside `userHome`, `homeBase`, the host `paseoBinary` or an absolute
   `environmentPath` entry. The planner cannot see the disk, so it cannot tell whether a directory already exists: choose an
-  account name and `unixAccountHomeBase` that are new.
+  account name and `unixAccountHomeBase` that are new. These checks apply to separate people only; a unix-account person with no
+  `install` field is not checked (it keeps today's behaviour). `.` and `..` segments in `environmentPath` are refused only while
+  a person is separate, so the overlap check cannot be dodged.
 - **Not resumable.** `apply` stops at the first failing step and has no per-step resume. The first step, `useradd`, fails once
   the account exists, so after a failed install step (registry timeout, EACCES) a second `apply <name>` stops at `useradd`.
   Run the remaining steps by hand from `apply.sh` (or remove the half-made account and start again). This is true for every
