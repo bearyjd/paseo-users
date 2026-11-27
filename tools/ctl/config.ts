@@ -321,3 +321,43 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
   if (issues.length > 0) throw new ConfigError(issues);
   return ctx;
 }
+
+/**
+ * Checks a ResolvedConfig that may not have come from parseConfig (a library caller can build one by hand) with every rule
+ * parseConfig applies: names, paths, ports, the account-home overlaps, install mode. Throws ConfigError listing every problem.
+ * Returns nothing: it validates, it does not rewrite. Acknowledgements are not part of a resolved config, so each same-user
+ * person is given the shared-history acknowledgement here; that rule is about the host plan, not about the data checked.
+ */
+export function revalidateResolved(ctx: ResolvedConfig, registry: IsolationRegistry = defaultRegistry): void {
+  // The raw schema lets a port be left out (parseConfig then assigns one); a resolved person must already have one.
+  const noPort = ctx.people.filter((p) => !Number.isInteger(p.port)).map((p) => `${p.name}: port must be a whole number, got ${String(p.port)}`);
+  if (noPort.length > 0) throw new ConfigError(noPort);
+  parseConfig(
+    {
+      userHome: ctx.userHome,
+      listenAddress: ctx.listenAddress,
+      // Every port is explicit below, so the base is only there to satisfy the schema.
+      basePort: 1024,
+      paseoBinary: ctx.paseoBinary,
+      homeBase: ctx.homeBase,
+      ...(ctx.paseoVersion !== undefined ? { paseoVersion: ctx.paseoVersion } : {}),
+      ...(ctx.environmentPath !== undefined ? { environmentPath: ctx.environmentPath } : {}),
+      unixAccountHomeBase: ctx.unixAccountHomeBase,
+      webUi: ctx.webUi,
+      allowAllInterfaces: ctx.allowAllInterfaces,
+      allowDefaultPort: ctx.allowDefaultPort,
+      existingDaemons: ctx.existingDaemons,
+      people: ctx.people.map((p) => ({
+        name: p.name,
+        isolation: p.isolation,
+        port: p.port,
+        ...(p.unixAccount !== undefined ? { unixAccount: p.unixAccount } : {}),
+        ...(p.install !== undefined ? { install: p.install } : {}),
+        // A resolved person always has a list; a non-separate one with entries is the error parseConfig reports.
+        ...(p.install === "separate" || p.providers.length > 0 ? { providers: p.providers } : {}),
+        acknowledge: ["shared-provider-history"],
+      })),
+    },
+    registry,
+  );
+}

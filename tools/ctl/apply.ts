@@ -19,7 +19,12 @@ export interface ApplyResult {
   ok: boolean;
   /** Step ids in the order they ran successfully. */
   executed: string[];
-  failed?: { id: string; code: number };
+  failed?: {
+    id: string;
+    code: number;
+    /** Set when the runner could not run the command at all (it rejected, for example a spawn error), so there is no exit code. */
+    error?: string;
+  };
   /** Steps left for the other phase, and manual steps. Never run here. */
   skipped: { id: string; reason: "needs-root" | "must-not-run-as-root" | "manual" }[];
   /** argv of every command handed to the runner, in order. */
@@ -83,7 +88,16 @@ export async function applyPlan(plan: Plan, outDirInput: string, runner: Command
     result.commands.push(argv);
     // Staged sources are relative to the output directory. A command that runs as an account must not start there: the
     // directory may sit under the operator's home, and env -i does not change the working directory.
-    const { code } = await runner.run(argv, { cwd: runsAsAccount(argv) ? "/" : outDir });
+    // A runner that cannot start the command rejects. That is a failed step like any other: it must be reported with its id
+    // so the caller can say what was left half done, not escape as a bare process error.
+    let code: number;
+    try {
+      ({ code } = await runner.run(argv, { cwd: runsAsAccount(argv) ? "/" : outDir }));
+    } catch (e) {
+      result.ok = false;
+      result.failed = { id: step.id, code: -1, error: e instanceof Error ? e.message : String(e) };
+      return result;
+    }
     if (code !== 0) {
       result.ok = false;
       result.failed = { id: step.id, code };

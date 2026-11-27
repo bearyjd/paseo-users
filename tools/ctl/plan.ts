@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { ConfigError, EXACT_VERSION, UNIX_NAME, type Person, type ResolvedConfig } from "./config.js";
+import { ConfigError, EXACT_VERSION, UNIX_NAME, revalidateResolved, type Person, type ResolvedConfig } from "./config.js";
 import { PROVIDER_IDS } from "./providers.js";
 import { sharedLayout } from "./isolation/same-user.js";
 import { accountLayout } from "./isolation/unix-account.js";
@@ -185,8 +185,9 @@ export function personStepFilter(plan: Plan, name: string): (stepId: string) => 
 export function planMigrate(ctx: ResolvedConfig, name: string, registry: IsolationRegistry = defaultRegistry): Plan {
   const person = ctx.people.find((p) => p.name === name);
   if (!person) throw new Error(`unknown person "${name}" (known: ${ctx.people.map((p) => p.name).join(", ")})`);
-  // planMigrate is exported and takes a ResolvedConfig that may be hand-built, so what parseConfig checks is checked again
-  // here, as ConfigError and before any step exists.
+  // planMigrate is exported and takes a ResolvedConfig that may be hand-built, so it is validated again here, as ConfigError
+  // and before any step exists: the checks below give the migrate-specific messages, revalidateResolved then applies every
+  // rule parseConfig does (names, paths, ports, account-home overlaps) to the whole config.
   if (person.isolation !== "unix-account" || person.install !== "separate") {
     throw new ConfigError([
       `${name}: migrate moves a person to a separate install, so the config must describe them as isolation "unix-account" ` +
@@ -212,6 +213,7 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
   }
   if (targetIssues.length > 0) throw new ConfigError(targetIssues);
   const strategy = registry.get(person.isolation);
+  revalidateResolved(ctx, registry);
   const n = name;
   const old = sharedLayout(person, ctx);
   const next = accountLayout(person, ctx);
@@ -271,6 +273,8 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
   const wants = posix.join(unitDir, "default.target.wants", old.unit);
   const unitFile = posix.join(unitDir, old.unit);
   const listenLine = `Environment=PASEO_LISTEN=${ctx.listenAddress}:${person.port}`;
+  const homeLine = `Environment=PASEO_HOME=${old.home}`;
+  const envLine = `EnvironmentFile=${old.envFile}`;
   const pre = (id: string, description: string, command: string[]): Step =>
     root({ id: `${n}.guard-old-${id}`, description: `${description} (UNVERIFIED on a real host)`, kind: "command", command });
   // Every directory above the old PASEO_HOME, from the top (not "/"): a symbolic link in any of them would let mv and chown
@@ -294,6 +298,23 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
       "port",
       `Refuse to continue unless the old unit ${unitFile} has the line ${listenLine}: the person keeps the SAME port, so the port in your config must be the one the shared daemon listens on now, or every saved connection breaks. If it fails, set the port in the config to the old one (paseo-users add ${n} --separate ... --port <old port>) and render again`,
       ["grep", "-q", "-x", "-F", "-e", listenLine, "--", unitFile],
+    ),
+    // The port line alone does not tie the unit to the paths mv, chown and install take: with a wrong homeBase, an unrelated
+    // ann/ and ann.env that happen to exist would pass every guard above. The unit the shared layout renders names both.
+    pre(
+      "unit-home",
+      `Refuse to continue unless the old unit ${unitFile} has the line ${homeLine}: the directory this plan moves and gives to ${next.account} must be the PASEO_HOME the shared daemon really uses, not another directory that happens to be called ${n} (a wrong homeBase). It does not check that the directory looks like a PASEO_HOME`,
+      ["grep", "-q", "-x", "-F", "-e", homeLine, "--", unitFile],
+    ),
+    pre(
+      "unit-env",
+      `Refuse to continue unless the old unit ${unitFile} has the line ${envLine}: the password file this plan copies to ${next.account} must be the one the shared daemon really reads (a wrong homeBase would copy an unrelated file)`,
+      ["grep", "-q", "-x", "-F", "-e", envLine, "--", unitFile],
+    ),
+    pre(
+      "account",
+      `Refuse to continue if ${next.accountHome} already exists: useradd would fail there, after the old daemon is stopped, and a stale or foreign directory must not become ${next.account}'s home. This does not check whether the user or group ${next.account} exists elsewhere on the host`,
+      ["test", "!", "-e", next.accountHome],
     ),
   ];
   const move = root({

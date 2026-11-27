@@ -223,7 +223,7 @@ async function resolveExisting(path: string): Promise<string> {
 }
 
 /**
- * Refuses an output directory that is, or lies below, any of `sources`. migrate moves the old PASEO_HOME while apply.sh and
+ * Refuses an output directory that is, lies below, or contains any of `sources`. migrate moves the old PASEO_HOME while apply.sh and
  * every non-account command still use the output directory as their working directory: one inside the source moves with it.
  * Compared as written and with symbolic links resolved, so a link into the source does not get past it.
  */
@@ -237,6 +237,11 @@ async function refuseOutInside(out: string, sources: string[]): Promise<void> {
     for (const src of new Set([resolve(source), await resolveExisting(source)])) {
       if (outForms.some((o) => isInside(src, o))) {
         throw new UsageError(`refusing: the output directory ${out} is, or lies inside, ${source}, which migrate moves. Use another --out (or XDG_STATE_HOME)`);
+      }
+      // The other way round: rendering into a reused directory deletes <out>/files, so a source below the output directory
+      // (homeBase under <out>/files, or --out a parent of homeBase) would be deleted before any apply phase runs.
+      if (outForms.some((o) => isInside(o, src))) {
+        throw new UsageError(`refusing: ${source}, which migrate moves, lies inside the output directory ${out}, and rendering there deletes ${out}/files. Use another --out (or XDG_STATE_HOME) that does not contain it`);
       }
     }
   }
@@ -302,7 +307,9 @@ const REFUSAL = "refusing: apply changes the host. Pass --yes and --i-understand
  * What state a failed apply leaves and what to do next. apply has no resume: a second run stops at the first step that
  * cannot be repeated (useradd, or for a migration the old-home guard). A failed migration preflight (`.guard-old-*`) is the
  * exception: it is read-only and runs before anything changes, so it says a re-run is safe and how to restart the stopped
- * shared unit. So it names the failed step, the steps after it,
+ * shared unit. The old-home guard is the one preflight that says the opposite: once an earlier run moved the data it fails
+ * too, and restarting the old unit would fork the person's data. A failure between the preflight and the move (useradd and
+ * the like) is not resumable but still names how to restart the stopped unit. It names the failed step, the steps after it,
  * and, once a migration has moved the old PASEO_HOME, that the data is already in the new account.
  */
 function failureState(plan: Plan, out: string, failedId: string | undefined, executed: string[], only?: (id: string) => boolean): string {
@@ -322,11 +329,34 @@ function failureState(plan: Plan, out: string, failedId: string | undefined, exe
       `The old PASEO_HOME was already moved (${moved} ran) and the shared daemon is stopped. apply is not resumable: running migrate again stops at the ` +
         `old-home guard, because that person is already migrated. Fix the cause, then run the steps below by hand, in this order, from ${join(out, "apply.sh")}.\n`,
     );
+  } else if (failedId !== undefined && failedId.endsWith(".guard-old-home-dir") && restore) {
+    // Either the old home is gone because an earlier run already moved it, or homeBase is wrong. Both look the same here, and
+    // restarting the old unit is right only in the second case: in the first it starts a daemon on an empty PASEO_HOME.
+    lines.push(
+      `The old PASEO_HOME is not there. Most likely this person is already migrated (an earlier run moved it): then the old shared unit must not be re-enabled. ` +
+        `It would start a second daemon on the person's port with a fresh, empty PASEO_HOME and a new server identity, next to the account's own daemon. ` +
+        `Check where the data is (the new account's .paseo-daemon, and your homeBase) before you do anything else. ` +
+        `If instead homeBase in the config is wrong and the shared daemon's data is still where it was, fix homeBase and run migrate again; ${stopped} stopped the old unit, and the way back is the same command with enable instead of disable.\n`,
+    );
+    return lines.join("");
   } else if (failedId !== undefined && /\.guard-old-/.test(failedId) && restore) {
     // A migration preflight: read-only, and it runs before the account, the move and the copy.
     lines.push(
       `Nothing on the host was changed by this run: ${failedId} is a read-only check that runs before the account, the move and the copy, so it is safe to run this command again after you fix the cause.\n` +
         `If the unprivileged phase already ran, ${stopped} has stopped and disabled the shared unit, so the old daemon is offline. To bring it back, as your normal user: ${restore.join(" ")}\n`,
+    );
+  } else if (restore && failedId !== undefined && failedId !== stopped) {
+    // A step after the preflight but before the move (useradd, lock-password, account-home, or the move itself). The shared
+    // unit was stopped and disabled by the unprivileged phase if that ran, and nothing here brings it back.
+    const moving = failedId.endsWith(".move-paseo-home");
+    lines.push(
+      `apply is not resumable: a second run stops at the first step that cannot be repeated (useradd, or the old-home guard once the data moved). ` +
+        `The old PASEO_HOME was not moved by this run. ` +
+        `If the unprivileged phase already ran, ${stopped} has stopped and disabled the shared unit, so the old daemon is offline. ` +
+        `To bring it back, as your normal user: ${restore.join(" ")}\n` +
+        (moving
+          ? `The move itself failed: mv across file systems copies and then deletes, so check BOTH the old and the new PASEO_HOME for a partial copy before you restart anything.\n`
+          : `A step that already ran (see ok above) may have created the account; check before you start it again: the account steps cannot be repeated.\n`),
     );
   } else {
     lines.push(`apply is not resumable: a second run stops at the first step that cannot be repeated. Steps after it are listed below; they are in ${join(out, "apply.sh")}.\n`);
@@ -347,7 +377,8 @@ async function runApply(plan: Plan, out: string, io: CliIo, only?: (id: string) 
   for (const id of result.executed) io.stdout(`ok     ${id}\n`);
   for (const s of result.skipped) io.stdout(`skip   ${s.id} (${s.reason})\n`);
   if (!result.ok) {
-    io.stderr(`FAILED at ${result.failed?.id} (exit ${result.failed?.code}); later steps did not run.\n`);
+    const why = result.failed?.error !== undefined ? `could not run: ${result.failed.error}` : `exit ${result.failed?.code}`;
+    io.stderr(`FAILED at ${result.failed?.id} (${why}); later steps did not run.\n`);
     io.stderr(failureState(plan, out, result.failed?.id, result.executed, only));
     return 1;
   }

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { passphraseProblem } from "./passphrase.js";
 import type { Plan } from "./plan.js";
@@ -28,11 +28,25 @@ function inside(root: string, p: string): string {
   return full;
 }
 
+/**
+ * Writes a new file. A file or symbolic link already at `path` is removed first and the write must create the file
+ * (`wx`), so a link planted in a reused output directory is replaced and never written through. apply runs this as root
+ * for migrate, so what a link points at must not change. A directory at `path` makes the removal fail, which is the
+ * right answer too.
+ */
+async function writeFresh(path: string, content: string, mode: number): Promise<void> {
+  await rm(path, { force: true });
+  await writeFile(path, content, { mode, flag: "wx" });
+  await chmod(path, mode);
+}
+
 async function writePrivate(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, content, { mode: 0o600 });
-  await chmod(path, 0o600);
+  await writeFresh(path, content, 0o600);
 }
+
+/** One line of a `#` comment: a line break in an id or description would start an executable line at column 0. */
+const oneLine = (text: string): string => text.replace(/[\r\n\u2028\u2029]+/g, " ");
 
 
 export function renderApplyScript(plan: Plan): string {
@@ -53,7 +67,7 @@ export function renderApplyScript(plan: Plan): string {
   ];
   for (const s of plan.steps) {
     const phase = s.privileged ? "root" : "user";
-    lines.push(`# ${s.id}: ${s.description}`);
+    lines.push(`# ${oneLine(s.id)}: ${oneLine(s.description)}`);
     const argv = stepArgv(s);
     if (!argv) {
       lines.push(`# (manual, not run by this script)`, "");
@@ -67,7 +81,7 @@ export function renderApplyScript(plan: Plan): string {
   lines.push("# Checks to run by hand afterwards (not run by this script):");
   for (const s of plan.verify) {
     const argv = stepArgv(s);
-    lines.push(`#   ${s.id}: ${s.description}${argv ? `\n#     ${argv.map(shellQuote).join(" ")}` : ""}`);
+    lines.push(`#   ${oneLine(s.id)}: ${oneLine(s.description)}${argv ? `\n#     ${argv.map(shellQuote).join(" ")}` : ""}`);
   }
   lines.push("");
   return lines.join("\n");
@@ -99,8 +113,7 @@ export async function renderPlan(plan: Plan, outDirInput: string, opts: RenderOp
     if (s.kind === "file" && s.file?.content !== undefined) {
       const target = inside(filesRoot, s.file.path.replace(/^\/+/, ""));
       await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, s.file.content, { mode: 0o644 });
-      await chmod(target, 0o644);
+      await writeFresh(target, s.file.content, 0o644);
     }
   }
 
@@ -109,6 +122,10 @@ export async function renderPlan(plan: Plan, outDirInput: string, opts: RenderOp
   const secretNames = [...new Set(plan.steps.flatMap((s) => (s.file?.secretRef ? [s.file.secretRef] : [])))];
   if (secretNames.length > 0) {
     const secretsDir = inside(outDir, "secrets");
+    // secrets/ holds passwords: a link here would send them wherever it points.
+    if ((await lstat(secretsDir).catch(() => undefined))?.isSymbolicLink()) {
+      throw new Error(`${secretsDir} is a symbolic link: remove it or pick another output directory`);
+    }
     await mkdir(secretsDir, { recursive: true, mode: 0o700 });
     await chmod(secretsDir, 0o700);
     for (const name of secretNames) {
@@ -139,9 +156,7 @@ export async function renderPlan(plan: Plan, outDirInput: string, opts: RenderOp
   }
 
   // plan.json: steps with content are fine (units hold no secrets); secret files carry only a reference.
-  await writeFile(inside(outDir, "plan.json"), `${JSON.stringify(plan, null, 2)}\n`, { mode: 0o644 });
-  const script = inside(outDir, "apply.sh");
-  await writeFile(script, renderApplyScript(plan), { mode: 0o644 });
-  await chmod(script, 0o644);
+  await writeFresh(inside(outDir, "plan.json"), `${JSON.stringify(plan, null, 2)}\n`, 0o644);
+  await writeFresh(inside(outDir, "apply.sh"), renderApplyScript(plan), 0o644);
   return { outDir, generated, kept };
 }

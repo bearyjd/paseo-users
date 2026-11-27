@@ -187,16 +187,26 @@ file `<homeBase>/<name>.env`, unit `paseo-<name>.service`). It refuses (exit 2) 
    `default.target.wants` link in your user manager's directory, so an enabled unit that is starting or restarting, or one
    that would start a second daemon at the next login, blocks the root phase), `guard-old-home-link` and `guard-old-env-link`
    (`test ! -L`: root must not follow a link planted by that person's same-user agents), `guard-old-home-dir` and
-   `guard-old-env-file` (`test -d`, `test -f`: a wrong `homeBase` or an already migrated person fails before `useradd`), and
+   `guard-old-env-file` (`test -d`, `test -f`: a missing source, or an already migrated person, fails before `useradd`),
+   `guard-old-unit-home` and `guard-old-unit-env` (`grep -q -x -F -e Environment=PASEO_HOME=<old home>` and
+   `EnvironmentFile=<old env file>` on the old unit: the directory that is moved and the file that is copied must be the
+   ones the shared daemon really uses, so a wrong `homeBase` that happens to hold an unrelated `<name>/` and `<name>.env`
+   is refused), `guard-old-account` (`test ! -e <account home>`: `useradd` would fail there after the old daemon is stopped;
+   it does not check whether the user or group exists elsewhere), and
    `guard-old-hardlinks` (`find <old> ! -type d -links +1 -exec false {} +`: `chown` changes the inode, so a hard link to a
    file outside the home would hand that file to the account). All UNVERIFIED on a real host. A race with a process that is
    still running is not closed; the stop and the pid guard are what keep the old daemon down. `planMigrate` also refuses
    (`ConfigError`), before any step exists, when the old PASEO_HOME or env file equals or contains `userHome`; when `homeBase`
    is `userHome` itself (the source would be an ordinary directory of your home); when `paseoBinary` or an `environmentPath`
    entry (`%h` expanded) lies inside the old PASEO_HOME or env file, since the move and chown would take it from the host; and,
-   for a hand-built config, when `paseoVersion` is missing or not exact, or the providers are empty or unknown. `migrate`
-   also refuses (exit 2) an `--out`, or a default render directory, that is or lies inside the old PASEO_HOME or env file,
-   also through a symbolic link: the move would take the output directory with it. There is no check that the source looks
+   for a hand-built config, when it breaks any rule `parseConfig` applies (`revalidateResolved`: names, paths, ports, the
+   account-home overlaps, version, providers). `migrate` also refuses (exit 2) an `--out`, or a default render directory,
+   that is, lies inside, or contains the old PASEO_HOME or env file, also through a symbolic link: the move would take the
+   output directory with it, and rendering into a reused directory deletes `<out>/files`. Rendering replaces `plan.json`,
+   `apply.sh`, staged files and secret files instead of writing through a symbolic link, and refuses a `secrets/` that is a
+   link. A runner that cannot start a command is reported as a failed step. A failure after the old unit was stopped but
+   before the move names the unit and the enable command; the old-home guard failing says the opposite (the person is
+   probably already migrated, do not re-enable the old unit). All UNVERIFIED on a real host. There is no check that the source looks
    like a PASEO_HOME (no marker file is known); the existing-directory and pid guards are what is checked.
 3. The slice 2 account and install steps, without a fresh `PASEO_HOME` (an `mv` into an existing directory would nest the
    old one) and without a rendered password.

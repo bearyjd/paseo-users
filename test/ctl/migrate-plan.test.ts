@@ -43,6 +43,8 @@ const PREFLIGHT_IDS = [
   "ann.guard-old-env-file",
   "ann.guard-old-hardlinks",
   "ann.guard-old-port",
+  "ann.guard-old-unit-home",
+  "ann.guard-old-unit-env",
 ];
 const OLD_SIDE = ["ann.stop-shared", "ann.guard-old-daemon-stopped", ...PREFLIGHT_IDS, "ann.move-paseo-home", "ann.carry-secret-env", "ann.migrate-note"];
 
