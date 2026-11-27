@@ -4,7 +4,7 @@ Status: config validation, the provider catalog and the planner for separate ins
 tests (`test/ctl/install-config.test.ts`, `test/ctl/providers.test.ts`, `test/ctl/separate-plan.test.ts`). Nothing has been
 applied on a real host: the npm installs, the `runuser` step shape and the provider logins are **UNVERIFIED**. The CLI surface
 (`add --separate`, `list`/`plan` mode, `plan.json` carrying `install` and `providers`, and the separate `notice-<name>.md`) is
-implemented and covered by `test/ctl/separate-cli.test.ts`. Migration (§5) is not implemented.
+implemented and covered by `test/ctl/separate-cli.test.ts`. Migration (§5) is implemented as `planMigrate` and `paseo-users migrate <name>`, covered by `test/ctl/migrate-plan.test.ts` and `test/ctl/migrate-cli.test.ts`; also UNVERIFIED on a real host.
 
 Goal: let each person be provisioned in one of two ways, from the same config and tool:
 
@@ -119,10 +119,30 @@ Verified by unit tests only (`test/ctl/review-fixes.test.ts`, `test/ctl/separate
 
 ## 5. Migration: moving a person from shared to separate
 
-`planMigrate(config, name)` would produce: stop and disable the shared unit; create the account and install (§3); move
-the person's `PASEO_HOME` into the account and `chown` it (keeps their Paseo sessions, projects, server identity and
-password); install and start the new unit **on the same port**, so their saved connection keeps working; leave the
-operator's provider history behind. Their provider logins start fresh.
+`planMigrate(config, name)` and `paseo-users migrate <name>`. The config describes the **target**: the person is now
+`unix-account` + `install: separate`, on the same port. The source is their same-user layout (home `<homeBase>/<name>`, env
+file `<homeBase>/<name>.env`, unit `paseo-<name>.service`). It refuses (exit 2) for anyone who is not separate. Steps, in order:
+
+1. `<name>.stop-shared` (unprivileged): `systemctl --user disable --now paseo-<name>.service`.
+2. `<name>.guard-old-daemon-stopped` (the FIRST privileged step): `test ! -e <old PASEO_HOME>/paseo.pid`. `apply` runs the
+   unprivileged and the privileged steps in separate invocations, in either order, and stops at the first failure. So the
+   guard, not the order you run them in, is what keeps `mv` from running under a live daemon: a failed guard stops the root
+   phase before the account, the move and the copy. That the daemon writes this file while it runs is seen in
+   `probes/daemon-harness.ts`; that it removes it on a clean stop is **UNVERIFIED**. A stale file after a crash blocks the
+   migration until you have checked that no daemon runs and removed it (fail closed).
+3. The slice 2 account and install steps, without a fresh `PASEO_HOME` (an `mv` into an existing directory would nest the
+   old one) and without a rendered password.
+4. `<name>.move-paseo-home`: `mv -T <old> <new>` (fails instead of nesting), then `<name>.chown-paseo-home`:
+   `chown -R -h <acct>:<acct> <new>` (does not follow symlinks). Both come right after the account home exists and before any
+   account code runs.
+5. `<name>.carry-secret-env`: `install -m 0600 -o <acct> -g <acct> <old env> <new env>`, after the symlink guard for the
+   destination. The existing password keeps working, so their saved connection does too. Nothing is rotated or rendered, and
+   the old file is left for you to delete.
+6. The new unit is installed and started on the same port; `<name>.migrate-note` (manual): provider logins start fresh and
+   your provider history stays behind. Nothing is copied.
+
+The old paths appear only in the stop, guard, move, copy and note steps; the new unit and every account-level command name
+nothing of the operator's. The `.paseo-home` mode is whatever the old directory had. Not resumable, like every unix-account apply.
 
 ## 6. How we would verify it
 

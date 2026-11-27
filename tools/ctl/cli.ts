@@ -6,7 +6,7 @@ import { ConfigError, parseConfig, PERSON_NAME, type RawConfig, type ResolvedCon
 import type { Detected, Detector } from "./detect.js";
 import { writeNotices } from "./notice.js";
 import { passphraseProblem } from "./passphrase.js";
-import { personStepFilter, planForPerson, planHost, planRevoke, type Plan } from "./plan.js";
+import { personStepFilter, planForPerson, planHost, planMigrate, planRevoke, type Plan } from "./plan.js";
 import { renderPlan, type RenderOptions, type RenderResult } from "./render.js";
 import { secretSourceRel, shellQuote, stepArgv } from "./shell.js";
 import { defaultConfigPath, ensurePrivateDir, readRawConfig, stateDir, UsageError, writeRawConfig, type HostEnv } from "./store.js";
@@ -52,6 +52,10 @@ Plan and render (the stored config is used; pass --config <file> to use another)
   revoke-plan <name> [--out <dir>] [--json]
   password <name> [--stdin] [--out <dir>]          rotate (random) or set (one line on stdin) a password in the rendered files
   revoke <name> [--out <dir>] [--apply --yes --i-understand-this-changes-the-host]
+  migrate <name> [--out <dir>] [--apply --yes --i-understand-this-changes-the-host]
+       move a person from the shared install to their own account (config: isolation unix-account, install separate,
+       same port). Keeps their Paseo data and password; provider logins start fresh. Default dir: .../migrate-<name>.
+       UNVERIFIED on a real host.
 
 Change the host:
   apply <name> --yes --i-understand-this-changes-the-host [--out <dir>]
@@ -665,6 +669,32 @@ async function cmdRevoke(args: string[], io: CliIo): Promise<number> {
   return runApply(plan, out, io);
 }
 
+async function cmdMigrate(args: string[], io: CliIo): Promise<number> {
+  const p = parseFlags(args, ["--out", "--config"], ["--apply", ...APPLY_FLAGS]);
+  const wantApply = p.bools.has("--apply");
+  if (wantApply && !hasApplyFlags(p)) {
+    io.stderr(REFUSAL);
+    return 2;
+  }
+  if (p.positional.length > 1) throw new UsageError("usage: migrate <name> [--out <dir>] [--apply --yes --i-understand-this-changes-the-host]");
+  const config = await loadStored(storeFor(io, p));
+  const name = requirePerson(config, p.positional[0]);
+  // Refuses (exit 2) unless the stored config already describes this person as separate. Nothing is rendered before that.
+  const plan = planMigrate(config, name);
+  const out = await outDirFor(io, p, `migrate-${name}`);
+  io.stdout(summary(plan));
+  // renderPlan, not renderHost: the plan has no secret to stage (the existing password is carried by a copy step), so no
+  // password is generated and no secrets/ directory is written.
+  const r = await renderPlan(plan, out);
+  io.stdout(`Rendered to ${r.outDir}. No password was generated; the existing one is copied across. Read apply.sh there.\n`);
+  if (!wantApply) {
+    io.stdout(`Nothing was applied: the host was not changed. To apply: paseo-users migrate ${name} --apply --yes --i-understand-this-changes-the-host\n`);
+    io.stdout("Run it twice: once as your normal user (stops the shared daemon), then as root (the first root step refuses while the old daemon may still run).\n");
+    return 0;
+  }
+  return runApply(plan, out, io);
+}
+
 async function cmdPassword(args: string[], io: CliIo): Promise<number> {
   const p = parseFlags(args, ["--out", "--config"], ["--stdin"]);
   if (p.positional.length > 1) throw new UsageError("usage: password <name> [--stdin]  (the passphrase is read from stdin, never from the command line)");
@@ -730,6 +760,8 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
         return await cmdApply(rest, io);
       case "revoke":
         return await cmdRevoke(rest, io);
+      case "migrate":
+        return await cmdMigrate(rest, io);
       case "password":
         return await cmdPassword(rest, io);
       case "--version":

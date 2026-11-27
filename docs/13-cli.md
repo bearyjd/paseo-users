@@ -1,7 +1,7 @@
 # 13 — The `paseo-users` command
 
 `paseo-users` keeps its own config and drives the planner from [11](11-daemon-per-person-runbook.md). It plans and
-renders by default. Only `apply` and `revoke --apply` change the host, and only with two explicit flags.
+renders by default. Only `apply`, `revoke --apply` and `migrate --apply` change the host, and only with two explicit flags.
 
 Status: the code paths below are covered by unit tests (`test/ctl/`, fake runner, temp directories, injected
 environment). **Nothing here has been run against a real host.** Real-host behaviour is UNVERIFIED unless a line says
@@ -53,6 +53,7 @@ A value flag may be given once. A repeated flag (for example two `--providers`) 
 | `render [--out d] [--rotate name\|all]` | Write the plan, `apply.sh`, units, secrets and `notice-<name>.md`. | No |
 | `revoke-plan <name> [--out d] [--json]` | Show (and optionally render) the revoke plan. | No |
 | `revoke <name> [--out d] [--apply --yes --i-understand-this-changes-the-host]` | Render the revoke plan into `revoke-<name>`; apply only with the flags. | Only with `--apply` and both flags |
+| `migrate <name> [--out d] [--apply --yes --i-understand-this-changes-the-host]` | Move a person from the shared install to their own account ([12](12-separate-installs-plan.md) section 5). The stored config must already describe them as `unix-account` + `install: separate` on the port they use now, or it refuses (exit 2). Renders the plan into `migrate-<name>`, with no new password and no `secrets/`; applies only with the flags. Run apply twice: as your normal user (stops the shared unit), then as root. The first root step is a guard that fails while the old daemon may still run, so the move cannot happen under a live daemon whichever phase you run first. **UNVERIFIED on a real host.** | Only with `--apply` and both flags |
 | `password <name> [--stdin]` | New random password, or one line from stdin as a chosen passphrase. Updates the rendered secrets only and prints the manual steps. | No |
 | `apply <name> --yes --i-understand-this-changes-the-host [--out d]` | Apply only that person's steps. | Yes |
 | `help`, `--help`, `--version` | | No |
@@ -72,6 +73,7 @@ writes the notice pages. A separate person's page says: own computer account wit
 | Config | `$XDG_CONFIG_HOME/paseo-users/config.json` (default `~/.config/paseo-users/config.json`) | dir 0700, file 0600 |
 | Rendered plan and secrets | `$XDG_STATE_HOME/paseo-users/render` (default `~/.local/state/paseo-users/render`) | dir 0700, `secrets/` 0700, files 0600 |
 | Revoke plans | `$XDG_STATE_HOME/paseo-users/revoke-<name>` | same |
+| Migration plans | `$XDG_STATE_HOME/paseo-users/migrate-<name>` | same (no `secrets/`) |
 
 The config is the same JSON as in the runbook (`RawConfig`). A fresh `init` stores `"people": []` until the first `add`;
 the other commands say so and stop until a person exists. The config holds no passwords.

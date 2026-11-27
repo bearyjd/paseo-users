@@ -1,4 +1,6 @@
 import type { Person, ResolvedConfig } from "./config.js";
+import { sharedLayout } from "./isolation/same-user.js";
+import { accountLayout } from "./isolation/unix-account.js";
 import { defaultRegistry } from "./isolation/registry.js";
 import type { IsolationRegistry, Step } from "./isolation/index.js";
 
@@ -167,4 +169,99 @@ export function personStepFilter(plan: Plan, name: string): (stepId: string) => 
   if (!person) throw new Error(`unknown person "${name}" (known: ${plan.people.map((p) => p.name).join(", ")})`);
   const separate = person.install === "separate";
   return (stepId) => stepId.startsWith(`${name}.`) || (!separate && stepId.startsWith("same-user."));
+}
+
+/**
+ * Moving a person from the shared layout (same-user) to their own account and installs, on the SAME port.
+ * The config describes the TARGET (unix-account, install separate); the SOURCE is the person's same-user layout. Describes
+ * only: nothing runs here, and none of it has been run on a real host (UNVERIFIED). Never rotates the password.
+ *
+ * apply runs the unprivileged and the privileged steps in separate invocations, in either order. So the plan cannot rely
+ * on the stop having happened when the root phase starts: the first privileged step is a guard that fails while the old
+ * daemon may still run, and apply stops at the first failure, so no account, move or copy can follow a failed guard.
+ */
+export function planMigrate(ctx: ResolvedConfig, name: string, registry: IsolationRegistry = defaultRegistry): Plan {
+  const person = ctx.people.find((p) => p.name === name);
+  if (!person) throw new Error(`unknown person "${name}" (known: ${ctx.people.map((p) => p.name).join(", ")})`);
+  if (person.isolation !== "unix-account" || person.install !== "separate") {
+    throw new Error(
+      `${name}: migrate moves a person to a separate install, so the config must describe them as isolation "unix-account" ` +
+        `with install "separate" (use "paseo-users add ${name} --separate ..." to describe the target first)`,
+    );
+  }
+  const strategy = registry.get(person.isolation);
+  const n = name;
+  const old = sharedLayout(person, ctx);
+  const next = accountLayout(person, ctx);
+  const root = (s: Omit<Step, "privileged">): Step => ({ ...s, privileged: true });
+
+  const stop: Step = {
+    id: `${n}.stop-shared`,
+    description: `Stop and disable the shared unit ${old.unit} in your own user manager, so the old daemon is down before its PASEO_HOME moves (UNVERIFIED on a real host)`,
+    kind: "command",
+    command: ["systemctl", "--user", "disable", "--now", old.unit],
+  };
+  const guard = root({
+    id: `${n}.guard-old-daemon-stopped`,
+    description:
+      `Refuse to continue while the old daemon may still run: ${old.home}/paseo.pid must not exist (the daemon writes it while it runs; ` +
+      `that it removes it on a clean stop is UNVERIFIED on a real host). Apply runs the unprivileged and root steps separately, ` +
+      `so this check, not the order you run them in, is what keeps the move from happening under a live daemon. ` +
+      `If it fails, run the unprivileged phase (the ${old.unit} stop) first; a stale file after a crash must be removed by you once you have checked no daemon runs`,
+    kind: "command",
+    command: ["test", "!", "-e", `${old.home}/paseo.pid`],
+  });
+  const move = root({
+    id: `${n}.move-paseo-home`,
+    description:
+      `Move ${n}'s PASEO_HOME ${old.home} to ${next.home} (keeps their sessions, projects, server identity and password). ` +
+      `-T makes the destination the new PASEO_HOME itself: if it exists, mv fails instead of nesting (UNVERIFIED on a real host)`,
+    kind: "command",
+    command: ["mv", "-T", old.home, next.home],
+  });
+  const chown = root({
+    id: `${n}.chown-paseo-home`,
+    description: `Give ${next.account} ownership of the moved PASEO_HOME, recursively, without following symbolic links (UNVERIFIED on a real host)`,
+    kind: "command",
+    command: ["chown", "-R", "-h", `${next.account}:${next.account}`, next.home],
+  });
+  const carry = root({
+    id: `${n}.carry-secret-env`,
+    description:
+      `Carry ${n}'s existing password file ${old.envFile} to ${next.envFile} (0600, owned by ${next.account}): the saved connection and ` +
+      `password keep working and nothing is rotated or rendered. The old file stays where it is; delete it yourself when done (UNVERIFIED on a real host)`,
+    kind: "command",
+    command: ["install", "-m", "0600", "-o", next.account, "-g", next.account, old.envFile, next.envFile],
+  });
+  const note: Step = {
+    id: `${n}.migrate-note`,
+    description:
+      `MANUAL: ${n}'s provider logins start fresh in ${next.account}: log in again to each provider (see the ${n}.login-* steps). ` +
+      `Your own provider history and logins stay behind and are not copied. Delete ${old.envFile} when you are satisfied. UNVERIFIED on a real host.`,
+    kind: "manual",
+  };
+
+  // The account and installs are the slice 2 steps, minus a fresh PASEO_HOME (mv would nest the old one inside it) and
+  // minus a rendered password (the existing one is carried across instead).
+  const fresh = strategy.plan(person, ctx).filter((s) => s.id !== `${n}.paseo-home` && s.id !== `${n}.secret-env`);
+  const steps: Step[] = [stop, guard];
+  for (const s of fresh) {
+    steps.push(s);
+    // The move needs the account home to exist, and both moves come before any account code runs.
+    if (s.id === `${n}.account-home`) steps.push(move, chown);
+    if (s.id === `${n}.guard-secret-env`) steps.push(carry);
+  }
+  steps.push(note);
+  for (const id of [move.id, chown.id, carry.id]) {
+    if (!steps.some((s) => s.id === id)) throw new Error(`${n}: the account plan has no place for ${id}`);
+  }
+
+  const others = ctx.people.filter((o) => o.name !== n && o.isolation !== "same-user");
+  return {
+    people: [describe(person, ctx, registry)],
+    steps: dedupe(steps),
+    verify: dedupe(strategy.verify(person, others, ctx)).filter((s) => s.id.startsWith(`${n}.`)),
+    warnings: warningsFor([person], ctx),
+    rotate: [],
+  };
 }

@@ -27,6 +27,14 @@ const asAccount = (p: Person, ctx: ResolvedConfig, ...argv: string[]) => [
   "runuser", "-u", acct(p), "--", "env", "-i", `HOME=${accountHome(p, ctx)}`, `PATH=${SYSTEM_PATH}`, ...argv,
 ];
 const isSeparate = (p: Person) => p.install === "separate";
+
+/** The account's own layout, for the migration planner (it moves an existing PASEO_HOME and env file to these paths). */
+export const accountLayout = (p: Person, ctx: ResolvedConfig) => ({
+  account: acct(p),
+  accountHome: accountHome(p, ctx),
+  home: home(p, ctx),
+  envFile: envFile(p, ctx),
+});
 /** Whether `child` is `parent` or below it, by whole path segments. */
 const inside = (parent: string, child: string) => {
   const rel = posix.relative(parent, child);
