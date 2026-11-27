@@ -191,6 +191,68 @@ describe("account home must not overlap the operator's home", () => {
   });
 });
 
+describe("path containment compares whole segments (a name starting with two dots is a child, not a parent)", () => {
+  it("rejects an operator home named ..operator inside the account home", () => {
+    fails(
+      rawCfg({ userHome: "/srv/acct-ann/..operator", unixAccountHomeBase: "/srv", paseoVersion: VERSION, people: [sep()] }),
+      /ann: account home .*userHome/,
+    );
+  });
+
+  it("rejects an account home under a ..accounts directory inside userHome", () => {
+    fails(
+      rawCfg({ unixAccountHomeBase: "/home/tester/..accounts", paseoVersion: VERSION, people: [sep()] }),
+      /ann: account home .*userHome/,
+    );
+    fails(
+      rawCfg({ unixAccountHomeBase: "/home/tester/..people", paseoVersion: VERSION, people: [sep()] }),
+      /ann: account home .*userHome/,
+    );
+  });
+
+  it("rejects a homeBase under ~/.paseo in a directory named ..x", () => {
+    fails(rawCfg({ homeBase: "/home/tester/.paseo/..x", paseoVersion: VERSION, people: [sep()] }), /homeBase .*~\/\.paseo/);
+  });
+
+  it("rejects a PASEO_HOME under ~/.paseo/..x", () => {
+    fails(
+      rawCfg({ homeBase: "/home/tester/.paseo/..x", people: [{ name: "ann", acknowledge: ["shared-provider-history"] }] }),
+      /PASEO_HOME .*~\/\.paseo|PASEO_HOME .*default/,
+    );
+  });
+
+  it("still accepts a sibling whose name merely starts with dots", () => {
+    expect(() => parseConfig(withSep({}, { unixAccountHomeBase: "/srv/..accounts" }))).not.toThrow();
+    expect(() => parseConfig(rawCfg({ homeBase: "/home/tester/..people", people: [{ name: "ann", acknowledge: ["shared-provider-history"] }] }))).not.toThrow();
+  });
+});
+
+describe("legacy unix-account config (no install field)", () => {
+  it("is not checked against the same-user homeBase, which it never uses", () => {
+    const c = parseConfig(
+      rawCfg({
+        userHome: "/home/operator",
+        homeBase: "/srv/paseo",
+        unixAccountHomeBase: "/srv/paseo",
+        people: [{ name: "ann", isolation: "unix-account", unixAccount: "acct-ann" }],
+      }),
+    );
+    expect(c.paseoBinary).toBe("/opt/paseo/bin/paseo");
+    expect(c.people[0]?.install).toBeUndefined();
+  });
+
+  it("still rejects a separate person whose account home overlaps homeBase", () => {
+    fails(
+      rawCfg({ userHome: "/home/operator", homeBase: "/srv/paseo", unixAccountHomeBase: "/srv/paseo", paseoVersion: VERSION, people: [sep()] }),
+      /ann: account home .*homeBase/,
+    );
+  });
+
+  it("still rejects an account home overlapping userHome", () => {
+    fails(rawCfg({ people: [{ name: "ann", isolation: "unix-account", unixAccount: "tester" }] }), /ann: account home .*userHome/);
+  });
+});
+
 describe("shared install", () => {
   const shared = (extra: Record<string, unknown> = {}) => ({ name: "ann", install: "shared", acknowledge: ["shared-provider-history"], ...extra });
 

@@ -134,7 +134,8 @@ export class ConfigError extends Error {
 
 const isInside = (parent: string, child: string) => {
   const rel = posix.relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !posix.isAbsolute(rel));
+  // Whole segments: a child directory named "..x" is inside, only ".." and "../..." are outside.
+  return rel === "" || (rel !== ".." && !rel.startsWith("../") && !posix.isAbsolute(rel));
 };
 
 function dupes<T>(items: T[]): T[] {
@@ -284,9 +285,12 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
     if (isInside(defaultHome, home)) issues.push(`${p.name}: PASEO_HOME ${home} is the default ~/.paseo or inside it`);
     if (p.isolation === "unix-account" && p.unixAccount) {
       // The account home is chowned and (for separate installs) gets its own npm prefix. It must not be, contain or sit
-      // inside the operator's home or the same-user homeBase.
+      // inside the operator's home. A separate install is also checked against the same-user homeBase; a legacy
+      // unix-account person (no install field) never uses homeBase, so that check would reject configs that worked before.
       const accountHome = posix.join(c.unixAccountHomeBase, p.unixAccount);
-      for (const [label, other] of [["userHome", c.userHome], ["homeBase", homeBase]] as const) {
+      const others: (readonly [string, string])[] = [["userHome", c.userHome]];
+      if (p.install === "separate") others.push(["homeBase", homeBase]);
+      for (const [label, other] of others) {
         if (isInside(accountHome, other) || isInside(other, accountHome)) {
           issues.push(`${p.name}: account home ${accountHome} equals, contains or is inside ${label} ${other}; choose another unixAccount or unixAccountHomeBase`);
         }
