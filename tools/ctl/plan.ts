@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { ConfigError, EXACT_VERSION, type Person, type ResolvedConfig } from "./config.js";
+import { ConfigError, EXACT_VERSION, UNIX_NAME, type Person, type ResolvedConfig } from "./config.js";
 import { PROVIDER_IDS } from "./providers.js";
 import { sharedLayout } from "./isolation/same-user.js";
 import { accountLayout } from "./isolation/unix-account.js";
@@ -200,6 +200,15 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
   if (person.providers.length === 0) targetIssues.push(`${name}: install "separate" requires at least one provider (known: ${PROVIDER_IDS.join(", ")})`);
   for (const id of person.providers) {
     if (!PROVIDER_IDS.includes(id)) targetIssues.push(`${name}: unknown provider "${id}" (known: ${PROVIDER_IDS.join(", ")})`);
+  }
+  for (const id of new Set(person.providers.filter((id, i) => person.providers.indexOf(id) !== i))) {
+    targetIssues.push(`${name}: duplicate provider "${id}"`);
+  }
+  // The account name goes straight into useradd, chown and every runuser step, so it is checked as parseConfig checks it.
+  if (person.unixAccount === undefined || !UNIX_NAME.test(person.unixAccount)) {
+    targetIssues.push(`${name}: unixAccount must be a portable POSIX user name, got ${person.unixAccount === undefined ? "none" : `"${person.unixAccount}"`}`);
+  } else if (person.unixAccount === "root") {
+    targetIssues.push(`${name}: unixAccount must not be root`);
   }
   if (targetIssues.length > 0) throw new ConfigError(targetIssues);
   const strategy = registry.get(person.isolation);

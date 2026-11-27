@@ -269,6 +269,7 @@ describe("finding 7: a failure after the move says what state is left and what t
   it("after the move: names the moved home, the steps that did not run, and apply.sh", async () => {
     const s = await stored();
     const runner = failing("ann.install-paseo");
+    await s.run(["migrate", "ann"]); // review first: migrate --apply applies only the rendered plan
     const r = await s.run(["migrate", "ann", "--apply", ...YES], { isRoot: () => true, runner });
     expect(r.code).toBe(1);
     expect(r.err).toContain("FAILED at ann.install-paseo");
@@ -282,6 +283,7 @@ describe("finding 7: a failure after the move says what state is left and what t
   it("a rerun stops at the old-home guard and the output explains why", async () => {
     const s = await stored();
     const runner = failing("ann.guard-old-home-dir");
+    await s.run(["migrate", "ann"]); // review first: migrate --apply applies only the rendered plan
     const r = await s.run(["migrate", "ann", "--apply", ...YES], { isRoot: () => true, runner });
     expect(r.code).toBe(1);
     expect(r.err).toContain("FAILED at ann.guard-old-home-dir");

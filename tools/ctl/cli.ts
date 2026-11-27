@@ -300,7 +300,9 @@ const REFUSAL = "refusing: apply changes the host. Pass --yes and --i-understand
 
 /**
  * What state a failed apply leaves and what to do next. apply has no resume: a second run stops at the first step that
- * cannot be repeated (useradd, or for a migration the old-home guard). So it names the failed step, the steps after it,
+ * cannot be repeated (useradd, or for a migration the old-home guard). A failed migration preflight (`.guard-old-*`) is the
+ * exception: it is read-only and runs before anything changes, so it says a re-run is safe and how to restart the stopped
+ * shared unit. So it names the failed step, the steps after it,
  * and, once a migration has moved the old PASEO_HOME, that the data is already in the new account.
  */
 function failureState(plan: Plan, out: string, failedId: string | undefined, executed: string[], only?: (id: string) => boolean): string {
@@ -308,12 +310,23 @@ function failureState(plan: Plan, out: string, failedId: string | undefined, exe
   const at = plan.steps.findIndex((s) => s.id === failedId);
   const later = at < 0 ? [] : plan.steps.slice(at + 1).filter((s) => (!only || only(s.id)) && s.kind !== "manual").map((s) => s.id);
   const lines: string[] = [];
+  // A migration plan opens with the unprivileged stop of the shared unit; the way back is the same command with enable.
+  const stopStep = plan.steps.find((s) => s.id.endsWith(".stop-shared"));
+  const stopped = stopStep?.id;
+  const stopArgv = stopStep ? stepArgv(stopStep) : undefined;
+  const restore = stopArgv?.includes("disable") ? stopArgv.map((a) => (a === "disable" ? "enable" : a)) : undefined;
   if (failed) lines.push(`Failed step: ${failed.description}\n`);
   const moved = executed.find((id) => id.endsWith(".move-paseo-home"));
   if (moved) {
     lines.push(
       `The old PASEO_HOME was already moved (${moved} ran) and the shared daemon is stopped. apply is not resumable: running migrate again stops at the ` +
         `old-home guard, because that person is already migrated. Fix the cause, then run the steps below by hand, in this order, from ${join(out, "apply.sh")}.\n`,
+    );
+  } else if (failedId !== undefined && /\.guard-old-/.test(failedId) && restore) {
+    // A migration preflight: read-only, and it runs before the account, the move and the copy.
+    lines.push(
+      `Nothing on the host was changed by this run: ${failedId} is a read-only check that runs before the account, the move and the copy, so it is safe to run this command again after you fix the cause.\n` +
+        `If the unprivileged phase already ran, ${stopped} has stopped and disabled the shared unit, so the old daemon is offline. To bring it back, as your normal user: ${restore.join(" ")}\n`,
     );
   } else {
     lines.push(`apply is not resumable: a second run stops at the first step that cannot be repeated. Steps after it are listed below; they are in ${join(out, "apply.sh")}.\n`);
@@ -750,16 +763,34 @@ async function cmdMigrate(args: string[], io: CliIo): Promise<number> {
   }
   const out = await outDirFor(io, p, `migrate-${name}`);
   io.stdout(summary(plan));
+  if (wantApply) {
+    // Same gate as `apply <name>`: what runs is what was rendered and could be read. Without it the plan would be rendered
+    // and applied in one call, and applyPlan would compare the plan with a plan.json written a moment earlier.
+    const reviewed = await readFile(join(out, "plan.json"), "utf8").catch(() => undefined);
+    let current = false;
+    try {
+      current = reviewed !== undefined && JSON.stringify(JSON.parse(reviewed)) === JSON.stringify(plan);
+    } catch {
+      current = false;
+    }
+    if (!current) {
+      const fresh = await renderPlan(plan, out);
+      io.stdout(`Rendered to ${fresh.outDir}.\n`);
+      io.stderr(
+        `refusing: ${reviewed === undefined ? "nothing was rendered yet" : "the rendered plan was out of date"}. It is rendered now. ` +
+          `Read ${fresh.outDir}/apply.sh, then run this command again (as your normal user, then as root).\n`,
+      );
+      return 2;
+    }
+    return runApply(plan, out, io);
+  }
   // renderPlan, not renderHost: the plan has no secret to stage (the existing password is carried by a copy step), so no
   // password is generated and no secrets/ directory is written.
   const r = await renderPlan(plan, out);
   io.stdout(`Rendered to ${r.outDir}. No password was generated; the existing one is copied across. Read apply.sh there.\n`);
-  if (!wantApply) {
-    io.stdout(`Nothing was applied: the host was not changed. To apply: paseo-users migrate ${name} --apply --yes --i-understand-this-changes-the-host\n`);
-    io.stdout("Run it twice: once as your normal user (stops the shared daemon), then as root (the first root step refuses while the old daemon may still run).\n");
-    return 0;
-  }
-  return runApply(plan, out, io);
+  io.stdout(`Nothing was applied: the host was not changed. To apply: paseo-users migrate ${name} --apply --yes --i-understand-this-changes-the-host\n`);
+  io.stdout("Run it twice: once as your normal user (stops the shared daemon), then as root (the first root step refuses while the old daemon may still run). It applies only the plan rendered here; if the config changed since, it renders again and stops.\n");
+  return 0;
 }
 
 async function cmdPassword(args: string[], io: CliIo): Promise<number> {

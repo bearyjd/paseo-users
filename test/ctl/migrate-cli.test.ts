@@ -228,6 +228,7 @@ describe("migrate <name> --apply", () => {
 
   it("as a normal user runs only the stop, and says what is left for root", async () => {
     const s = await stored();
+    await s.run(["migrate", "ann"]); // review first: migrate --apply applies only the rendered plan
     const r = await s.run(["migrate", "ann", "--apply", ...YES], { isRoot: () => false });
     expect(r.code, r.err).toBe(0);
     expect(r.err).toContain("privileged");
@@ -238,6 +239,7 @@ describe("migrate <name> --apply", () => {
 
   it("as root runs the guard first, then the rest in plan order, and no unprivileged step", async () => {
     const s = await stored();
+    await s.run(["migrate", "ann"]); // review first: migrate --apply applies only the rendered plan
     const r = await s.run(["migrate", "ann", "--apply", ...YES], { isRoot: () => true });
     expect(r.code, r.err).toBe(0);
     const plan: Plan = expected();
@@ -257,6 +259,7 @@ describe("migrate <name> --apply", () => {
     const s = await stored();
     const g = JSON.stringify(guardArgv());
     const runner = new FakeRunner((argv) => JSON.stringify(argv) === g);
+    await s.run(["migrate", "ann"]); // review first: migrate --apply applies only the rendered plan
     const r = await s.run(["migrate", "ann", "--apply", ...YES], { isRoot: () => true, runner });
     expect(r.code).toBe(1);
     expect(r.err).toContain(`FAILED at ${GUARD}`);
@@ -266,6 +269,7 @@ describe("migrate <name> --apply", () => {
 
   it("the rendered migration plan is applied exactly as reviewed: no new password is rendered while applying", async () => {
     const s = await stored();
+    await s.run(["migrate", "ann"]); // review first: migrate --apply applies only the rendered plan
     const r = await s.run(["migrate", "ann", "--apply", ...YES], { isRoot: () => true });
     expect(r.code, r.err).toBe(0);
     expect(await readdir(join(s.stateRoot, "migrate-ann"))).not.toContain("secrets");
@@ -274,6 +278,7 @@ describe("migrate <name> --apply", () => {
 
   it("never passes a shell to the runner", async () => {
     const s = await stored();
+    await s.run(["migrate", "ann"]); // review first: migrate --apply applies only the rendered plan
     const r = await s.run(["migrate", "ann", "--apply", ...YES], { isRoot: () => true });
     expect(r.code, r.err).toBe(0);
     expect(s.runner.calls.length).toBeGreaterThan(5);

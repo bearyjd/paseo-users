@@ -10,7 +10,7 @@ export const DEFAULT_PASEO_PORT = 6767;
 const SAFE_PATH = /^\/[A-Za-z0-9._+@/-]*$/;
 const RESERVED_NAMES: ReadonlySet<string> = new Set(["same-user", "unix-account"]);
 export const PERSON_NAME = /^[a-z][a-z0-9_-]{1,31}$/;
-const UNIX_NAME = /^[a-z_][a-z0-9_-]{0,31}$/;
+export const UNIX_NAME = /^[a-z_][a-z0-9_-]{0,31}$/;
 // IPv4, hostname, or bracketed IPv6. No whitespace, no systemd specifiers.
 const LISTEN = /^(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9.-]+)$/;
 const ALL_INTERFACES = new Set(["0.0.0.0", "::", "[::]"]);
