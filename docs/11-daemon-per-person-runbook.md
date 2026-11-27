@@ -59,6 +59,14 @@ Podman) is one new file plus one line in `registry.ts`. The planner does not cha
   List it under `existingDaemons`; the planner warns.
 - Revoking a person stops their daemon and rotates their password. It cannot undo what their agents could already read.
 
+**Shared provider history (measured).** Because all `same-user` daemons use one Linux user's home, provider-native session
+history is shared too. A second daemon's `fetch_recent_provider_sessions` returned 20 recent sessions (the default page
+size) from the first person's Claude and Codex use, the setup wizard's project suggestions listed the first person's
+project directories with "last used" times, and the app shows an **Import session** action. Counts were taken; no session
+contents were read. So each person can see, and import into their own daemon, the other's past provider conversations. Paseo's
+own sessions, projects and passwords remain separate. If that is not acceptable, use `unix-account`. The planner prints this
+as a warning.
+
 ### `unix-account`
 
 - Separate uid, home (0700) and `PASEO_HOME` (0700). The OS stops one account reading another's files. The plan includes

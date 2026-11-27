@@ -63,6 +63,13 @@ function warningsFor(people: Person[], ctx: ResolvedConfig): string[] {
         "PASEO_HOME, including its credentials",
     );
   }
+  if (same.length > 1 || (same.length > 0 && ctx.existingDaemons.length > 0)) {
+    w.push(
+      "same-user daemons share the Linux user's provider session history (for example Claude and Codex conversations) and " +
+        "project directories: each person can see and import the others' past provider sessions, and the project suggestions " +
+        "list every directory the user has worked in. Paseo's own sessions, projects and passwords stay separate",
+    );
+  }
   if (unix.length > 0) {
     w.push(
       `LLM logins are not shared for unix-account people (${unix.map((p) => p.name).join(", ")}): each account needs ` +
