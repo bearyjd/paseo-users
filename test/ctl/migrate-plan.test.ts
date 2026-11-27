@@ -35,12 +35,14 @@ const ENV_PATH_VALUES = ["/opt/operator-tools/bin", "operator-secret-dir"];
 
 /** Steps that may name the old (shared) layout: they are the ones that stop, move and copy it. */
 const PREFLIGHT_IDS = [
+  "ann.guard-old-parents",
   "ann.guard-old-unit-disabled",
   "ann.guard-old-home-link",
   "ann.guard-old-home-dir",
   "ann.guard-old-env-link",
   "ann.guard-old-env-file",
   "ann.guard-old-hardlinks",
+  "ann.guard-old-port",
 ];
 const OLD_SIDE = ["ann.stop-shared", "ann.guard-old-daemon-stopped", ...PREFLIGHT_IDS, "ann.move-paseo-home", "ann.carry-secret-env", "ann.migrate-note"];
 

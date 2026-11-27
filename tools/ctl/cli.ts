@@ -1,9 +1,10 @@
 import { execFile, spawn } from "node:child_process";
-import { readFile, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readFile, realpath, rm, stat } from "node:fs/promises";
+import { basename, dirname, join, relative, isAbsolute, resolve } from "node:path";
 import { applyPlan, ApplyRefused, type CommandRunner } from "./apply.js";
 import { ConfigError, parseConfig, PERSON_NAME, type RawConfig, type ResolvedConfig } from "./config.js";
 import type { Detected, Detector } from "./detect.js";
+import { sharedLayout } from "./isolation/same-user.js";
 import { writeNotices } from "./notice.js";
 import { passphraseProblem } from "./passphrase.js";
 import { personStepFilter, planForPerson, planHost, planMigrate, planRevoke, type Plan } from "./plan.js";
@@ -205,6 +206,42 @@ async function outDirFor(io: CliIo, p: Parsed, leaf: string): Promise<string> {
   return out;
 }
 
+/** The path with symbolic links resolved as far as it exists; the rest (not created yet) is appended as written. */
+async function resolveExisting(path: string): Promise<string> {
+  const abs = resolve(path);
+  const rest: string[] = [];
+  for (let cur = abs; ; ) {
+    try {
+      return join(await realpath(cur), ...rest.reverse());
+    } catch {
+      const parent = dirname(cur);
+      if (parent === cur) return abs;
+      rest.push(basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/**
+ * Refuses an output directory that is, or lies below, any of `sources`. migrate moves the old PASEO_HOME while apply.sh and
+ * every non-account command still use the output directory as their working directory: one inside the source moves with it.
+ * Compared as written and with symbolic links resolved, so a link into the source does not get past it.
+ */
+async function refuseOutInside(out: string, sources: string[]): Promise<void> {
+  const isInside = (parent: string, child: string) => {
+    const rel = relative(parent, child);
+    return rel === "" || (rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel));
+  };
+  const outForms = [resolve(out), await resolveExisting(out)];
+  for (const source of sources) {
+    for (const src of new Set([resolve(source), await resolveExisting(source)])) {
+      if (outForms.some((o) => isInside(src, o))) {
+        throw new UsageError(`refusing: the output directory ${out} is, or lies inside, ${source}, which migrate moves. Use another --out (or XDG_STATE_HOME)`);
+      }
+    }
+  }
+}
+
 /** True when the store is the default config file, the only one the default render directory belongs to. */
 function isDefaultStore(io: CliIo, store: Store): boolean {
   try {
@@ -261,6 +298,30 @@ const APPLY_FLAGS = ["--yes", "--i-understand-this-changes-the-host"];
 const hasApplyFlags = (p: Parsed) => APPLY_FLAGS.every((f) => p.bools.has(f));
 const REFUSAL = "refusing: apply changes the host. Pass --yes and --i-understand-this-changes-the-host after reading apply.sh.\n";
 
+/**
+ * What state a failed apply leaves and what to do next. apply has no resume: a second run stops at the first step that
+ * cannot be repeated (useradd, or for a migration the old-home guard). So it names the failed step, the steps after it,
+ * and, once a migration has moved the old PASEO_HOME, that the data is already in the new account.
+ */
+function failureState(plan: Plan, out: string, failedId: string | undefined, executed: string[], only?: (id: string) => boolean): string {
+  const failed = plan.steps.find((s) => s.id === failedId);
+  const at = plan.steps.findIndex((s) => s.id === failedId);
+  const later = at < 0 ? [] : plan.steps.slice(at + 1).filter((s) => (!only || only(s.id)) && s.kind !== "manual").map((s) => s.id);
+  const lines: string[] = [];
+  if (failed) lines.push(`Failed step: ${failed.description}\n`);
+  const moved = executed.find((id) => id.endsWith(".move-paseo-home"));
+  if (moved) {
+    lines.push(
+      `The old PASEO_HOME was already moved (${moved} ran) and the shared daemon is stopped. apply is not resumable: running migrate again stops at the ` +
+        `old-home guard, because that person is already migrated. Fix the cause, then run the steps below by hand, in this order, from ${join(out, "apply.sh")}.\n`,
+    );
+  } else {
+    lines.push(`apply is not resumable: a second run stops at the first step that cannot be repeated. Steps after it are listed below; they are in ${join(out, "apply.sh")}.\n`);
+  }
+  if (later.length > 0) lines.push(`Not run: ${later.join(", ")}\n`);
+  return lines.join("");
+}
+
 async function runApply(plan: Plan, out: string, io: CliIo, only?: (id: string) => boolean): Promise<number> {
   const isRoot = (io.isRoot ?? (() => process.getuid?.() === 0))();
   const privileged = plan.steps.filter((s) => s.privileged && stepArgv(s) && (!only || only(s.id)));
@@ -274,6 +335,7 @@ async function runApply(plan: Plan, out: string, io: CliIo, only?: (id: string) 
   for (const s of result.skipped) io.stdout(`skip   ${s.id} (${s.reason})\n`);
   if (!result.ok) {
     io.stderr(`FAILED at ${result.failed?.id} (exit ${result.failed?.code}); later steps did not run.\n`);
+    io.stderr(failureState(plan, out, result.failed?.id, result.executed, only));
     return 1;
   }
   return 0;
@@ -681,6 +743,11 @@ async function cmdMigrate(args: string[], io: CliIo): Promise<number> {
   const name = requirePerson(config, p.positional[0]);
   // Refuses (exit 2) unless the stored config already describes this person as separate. Nothing is rendered before that.
   const plan = planMigrate(config, name);
+  const person = config.people.find((x) => x.name === name);
+  if (person) {
+    const old = sharedLayout(person, config);
+    await refuseOutInside(p.value("--out") ?? join(stateDir(io.env ?? {}), `migrate-${name}`), [old.home, old.envFile]);
+  }
   const out = await outDirFor(io, p, `migrate-${name}`);
   io.stdout(summary(plan));
   // renderPlan, not renderHost: the plan has no secret to stage (the existing password is carried by a copy step), so no

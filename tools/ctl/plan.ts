@@ -1,5 +1,6 @@
 import { posix } from "node:path";
-import { ConfigError, type Person, type ResolvedConfig } from "./config.js";
+import { ConfigError, EXACT_VERSION, type Person, type ResolvedConfig } from "./config.js";
+import { PROVIDER_IDS } from "./providers.js";
 import { sharedLayout } from "./isolation/same-user.js";
 import { accountLayout } from "./isolation/unix-account.js";
 import { defaultRegistry } from "./isolation/registry.js";
@@ -184,12 +185,23 @@ export function personStepFilter(plan: Plan, name: string): (stepId: string) => 
 export function planMigrate(ctx: ResolvedConfig, name: string, registry: IsolationRegistry = defaultRegistry): Plan {
   const person = ctx.people.find((p) => p.name === name);
   if (!person) throw new Error(`unknown person "${name}" (known: ${ctx.people.map((p) => p.name).join(", ")})`);
+  // planMigrate is exported and takes a ResolvedConfig that may be hand-built, so what parseConfig checks is checked again
+  // here, as ConfigError and before any step exists.
   if (person.isolation !== "unix-account" || person.install !== "separate") {
-    throw new Error(
+    throw new ConfigError([
       `${name}: migrate moves a person to a separate install, so the config must describe them as isolation "unix-account" ` +
         `with install "separate" (use "paseo-users add ${name} --separate ..." to describe the target first)`,
-    );
+    ]);
   }
+  const targetIssues: string[] = [];
+  if (ctx.paseoVersion === undefined || !EXACT_VERSION.test(ctx.paseoVersion)) {
+    targetIssues.push(`${name}: paseoVersion must be an exact version (x.y.z, optional -prerelease) for a separate install, got ${ctx.paseoVersion === undefined ? "none" : `"${ctx.paseoVersion}"`}`);
+  }
+  if (person.providers.length === 0) targetIssues.push(`${name}: install "separate" requires at least one provider (known: ${PROVIDER_IDS.join(", ")})`);
+  for (const id of person.providers) {
+    if (!PROVIDER_IDS.includes(id)) targetIssues.push(`${name}: unknown provider "${id}" (known: ${PROVIDER_IDS.join(", ")})`);
+  }
+  if (targetIssues.length > 0) throw new ConfigError(targetIssues);
   const strategy = registry.get(person.isolation);
   const n = name;
   const old = sharedLayout(person, ctx);
@@ -205,6 +217,26 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
   for (const [label, path] of [["PASEO_HOME", old.home], ["env file", old.envFile]] as const) {
     if (inside(path, ctx.userHome)) {
       throw new ConfigError([`${n}: the old ${label} ${path} equals or contains userHome ${ctx.userHome}; migrate would move or take over your own home. Choose another homeBase`]);
+    }
+  }
+
+  // The shared layout puts a person's data in a directory of its own below homeBase. A homeBase that is userHome would make
+  // the source an ordinary directory of the operator's home (~/<name>), which the shared layout could never have created.
+  if (ctx.homeBase === ctx.userHome) {
+    throw new ConfigError([`${n}: homeBase ${ctx.homeBase} is userHome itself, so the old PASEO_HOME ${old.home} would be an ordinary directory of your own home. Choose another homeBase`]);
+  }
+  // mv and chown take the whole source to the new account. Anything the host keeps using that lies inside it would go along.
+  const operatorPaths: [string, string][] = [["paseoBinary", ctx.paseoBinary]];
+  for (const entry of (ctx.environmentPath ?? "").split(":")) {
+    if (entry === "") continue;
+    const expanded = entry === "%h" || entry.startsWith("%h/") ? posix.join(ctx.userHome, entry.slice(2)) : posix.normalize(entry);
+    operatorPaths.push(["environmentPath entry", expanded]);
+  }
+  for (const [label, path] of operatorPaths) {
+    for (const [what, source] of [["PASEO_HOME", old.home], ["env file", old.envFile]] as const) {
+      if (inside(source, path)) {
+        throw new ConfigError([`${n}: ${label} ${path} is inside the old ${what} ${source}, which migrate moves and gives to ${next.account}; the host would lose it. Move it out first or choose another homeBase`]);
+      }
     }
   }
 
@@ -226,10 +258,19 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
   });
   // Preflight on the old layout. All root, all before the account exists, so a missing or planted source fails before the
   // host changes (a half-made account cannot be resumed). Each is one argv, no shell. UNVERIFIED on a real host.
-  const wants = posix.join(ctx.userHome, ".config", "systemd", "user", "default.target.wants", old.unit);
+  const unitDir = posix.join(ctx.userHome, ".config", "systemd", "user");
+  const wants = posix.join(unitDir, "default.target.wants", old.unit);
+  const unitFile = posix.join(unitDir, old.unit);
+  const listenLine = `Environment=PASEO_LISTEN=${ctx.listenAddress}:${person.port}`;
   const pre = (id: string, description: string, command: string[]): Step =>
     root({ id: `${n}.guard-old-${id}`, description: `${description} (UNVERIFIED on a real host)`, kind: "command", command });
+  // Every directory above the old PASEO_HOME, from the top (not "/"): a symbolic link in any of them would let mv and chown
+  // follow it to somewhere else, while the checks on the final component below would still pass. find does not follow
+  // links by default, so -type l matches a link at a start path itself, and -exec false makes find exit non-zero for it.
+  const parents: string[] = [];
+  for (let d = posix.dirname(old.home); d !== "/" && d !== "."; d = posix.dirname(d)) parents.unshift(d);
   const preflight: Step[] = [
+    pre("parents", `Refuse to continue if any directory above ${old.home} (${parents.join(", ")}) is a symbolic link: mv and chown would follow it to somewhere else, and the checks on ${old.home} itself would not notice. If one is a link on your host, set homeBase to the real path`, ["find", ...parents, "-maxdepth", "0", "-type", "l", "-exec", "false", "{}", "+"]),
     pre("unit-disabled", `Refuse to continue while ${old.unit} is still enabled (${wants} exists): a unit that is starting or waiting to restart has no ${old.home}/paseo.pid yet, and an enabled one would start a second daemon at the next login or boot. Run the unprivileged ${old.unit} stop first`, ["test", "!", "-L", wants]),
     pre("home-link", `Refuse to continue if ${old.home} is a symbolic link (mv would move the link and leave the data behind)`, ["test", "!", "-L", old.home]),
     pre("home-dir", `Refuse to continue unless ${old.home} exists as a directory, so a wrong homeBase or an already migrated person fails before the account is created`, ["test", "-d", old.home]),
@@ -239,6 +280,11 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
       "hardlinks",
       `Refuse to continue if anything under ${old.home} other than a directory has more than one hard link: chown changes the inode, so a link to a file outside the home would hand that file to ${next.account}. find exits non-zero when the -exec + command fails; a race with a running process is not closed (the daemon is stopped by the guard above)`,
       ["find", old.home, "!", "-type", "d", "-links", "+1", "-exec", "false", "{}", "+"],
+    ),
+    pre(
+      "port",
+      `Refuse to continue unless the old unit ${unitFile} has the line ${listenLine}: the person keeps the SAME port, so the port in your config must be the one the shared daemon listens on now, or every saved connection breaks. If it fails, set the port in the config to the old one (paseo-users add ${n} --separate ... --port <old port>) and render again`,
+      ["grep", "-q", "-x", "-F", "-e", listenLine, "--", unitFile],
     ),
   ];
   const move = root({

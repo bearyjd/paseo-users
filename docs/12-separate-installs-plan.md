@@ -131,7 +131,12 @@ file `<homeBase>/<name>.env`, unit `paseo-<name>.service`). It refuses (exit 2) 
    `probes/daemon-harness.ts`; that it removes it on a clean stop is **UNVERIFIED**. A stale file after a crash blocks the
    migration until you have checked that no daemon runs and removed it (fail closed).
    Right after it come root preflight guards on the old layout, all before the account exists, so a bad source fails before
-   the host changes (apply is not resumable): `<name>.guard-old-unit-disabled` (`test ! -L` on the unit's
+   the host changes (apply is not resumable): `<name>.guard-old-parents` (`find <every directory above the old home, not />
+   -maxdepth 0 -type l -exec false {} +`: a symbolic link in a parent directory, for example a `homeBase` that is a link to
+   `/home`, would make `mv` and `chown` follow it while the checks on the last component still pass; set `homeBase` to the
+   real path), `guard-old-port` (`grep -q -x -F -e Environment=PASEO_LISTEN=<listenAddress>:<port> -- <old unit file>`: the
+   person keeps the SAME port, so the port in your config must be the one the old unit listens on now, or every saved
+   connection breaks), `<name>.guard-old-unit-disabled` (`test ! -L` on the unit's
    `default.target.wants` link in your user manager's directory, so an enabled unit that is starting or restarting, or one
    that would start a second daemon at the next login, blocks the root phase), `guard-old-home-link` and `guard-old-env-link`
    (`test ! -L`: root must not follow a link planted by that person's same-user agents), `guard-old-home-dir` and
@@ -139,7 +144,13 @@ file `<homeBase>/<name>.env`, unit `paseo-<name>.service`). It refuses (exit 2) 
    `guard-old-hardlinks` (`find <old> ! -type d -links +1 -exec false {} +`: `chown` changes the inode, so a hard link to a
    file outside the home would hand that file to the account). All UNVERIFIED on a real host. A race with a process that is
    still running is not closed; the stop and the pid guard are what keep the old daemon down. `planMigrate` also refuses
-   (`ConfigError`) when the old PASEO_HOME or env file equals or contains `userHome`, before any step exists.
+   (`ConfigError`), before any step exists, when the old PASEO_HOME or env file equals or contains `userHome`; when `homeBase`
+   is `userHome` itself (the source would be an ordinary directory of your home); when `paseoBinary` or an `environmentPath`
+   entry (`%h` expanded) lies inside the old PASEO_HOME or env file, since the move and chown would take it from the host; and,
+   for a hand-built config, when `paseoVersion` is missing or not exact, or the providers are empty or unknown. `migrate`
+   also refuses (exit 2) an `--out`, or a default render directory, that is or lies inside the old PASEO_HOME or env file,
+   also through a symbolic link: the move would take the output directory with it. There is no check that the source looks
+   like a PASEO_HOME (no marker file is known); the existing-directory and pid guards are what is checked.
 3. The slice 2 account and install steps, without a fresh `PASEO_HOME` (an `mv` into an existing directory would nest the
    old one) and without a rendered password.
 4. `<name>.move-paseo-home`: `mv -T <old> <new>` (fails instead of nesting), then `<name>.chown-paseo-home`:
@@ -153,6 +164,11 @@ file `<homeBase>/<name>.env`, unit `paseo-<name>.service`). It refuses (exit 2) 
 
 The old paths appear only in the stop, guard, move, copy and note steps; the new unit and every account-level command name
 nothing of the operator's. The `.paseo-home` mode is whatever the old directory had. Not resumable, like every unix-account apply.
+The installs are network steps that come after the irreversible move, and no registry reachability preflight exists (UNVERIFIED
+how one would run as root with a scrubbed environment). If an install step fails after the move, the data is already in the
+new account and the shared daemon is off: apply prints the failed step, that the move already happened, and the ids of the
+steps after it. Fix the cause and run those steps by hand from `apply.sh`; running `migrate` again stops at
+`guard-old-home-dir`.
 
 ## 6. How we would verify it
 

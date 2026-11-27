@@ -28,7 +28,7 @@ const absPath = (what: string) =>
  * Prerelease identifiers follow SemVer 2.0 section 9: a numeric identifier has no leading zero.
  */
 const PRERELEASE_ID = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
-const EXACT_VERSION = new RegExp(`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-${PRERELEASE_ID}(\\.${PRERELEASE_ID})*)?$`);
+export const EXACT_VERSION = new RegExp(`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-${PRERELEASE_ID}(\\.${PRERELEASE_ID})*)?$`);
 
 const port = z.number().int().min(1024, "port must be >= 1024").max(65535);
 
