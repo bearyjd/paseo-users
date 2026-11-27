@@ -289,7 +289,13 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
       // unix-account person (no install field) never uses homeBase, so that check would reject configs that worked before.
       const accountHome = posix.join(c.unixAccountHomeBase, p.unixAccount);
       const others: (readonly [string, string])[] = [["userHome", c.userHome]];
-      if (p.install === "separate") others.push(["homeBase", homeBase]);
+      if (p.install === "separate") {
+        others.push(["homeBase", homeBase], ["paseoBinary", c.paseoBinary]);
+        // %h entries are relative to the operator's home, which is already covered by userHome.
+        for (const entry of (c.environmentPath ?? "").split(":")) {
+          if (entry.startsWith("/")) others.push(["environmentPath entry", entry]);
+        }
+      }
       for (const [label, other] of others) {
         if (isInside(accountHome, other) || isInside(other, accountHome)) {
           issues.push(`${p.name}: account home ${accountHome} equals, contains or is inside ${label} ${other}; choose another unixAccount or unixAccountHomeBase`);

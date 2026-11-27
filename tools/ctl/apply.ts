@@ -40,6 +40,18 @@ export async function applyPlan(plan: Plan, outDirInput: string, runner: Command
     throw new ApplyRefused("the rendered plan.json does not match the config: render again and review it");
   }
 
+  // Staged files must be exactly what the reviewed plan says, or a unit edited after render would be installed as root.
+  // Checked for every selected file step before the first command runs, whichever phase runs it. Secret files hold no
+  // plan content (they are written from secrets/ at render), so only existence is checked for those, below.
+  for (const step of plan.steps) {
+    if (opts.only && !opts.only(step.id)) continue;
+    if (step.kind !== "file" || step.file?.content === undefined) continue;
+    const src = fileSourceRel(step.file.path);
+    const staged = await readFile(resolve(outDir, src), "utf8").catch(() => undefined);
+    if (staged === undefined) throw new ApplyRefused(`${src} is missing from ${outDir}: render again`);
+    if (staged !== step.file.content) throw new ApplyRefused(`${src} no longer matches the plan: render again and review it`);
+  }
+
   const result: ApplyResult = { ok: true, executed: [], skipped: [], commands: [] };
   for (const step of plan.steps) {
     if (opts.only && !opts.only(step.id)) continue;

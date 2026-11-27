@@ -19,13 +19,19 @@ const npmBin = (p: Person, ctx: ResolvedConfig) => join(npmPrefix(p, ctx), "bin"
 /** Fixed system PATH for account-level commands and the unit. Never derived from the operator's environment. */
 const SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin";
 /**
- * Run a command as the account, with its own HOME and a fixed PATH (nothing of the operator's environment).
+ * Run a command as the account, with its own HOME and a fixed PATH and nothing else: `env -i` drops every inherited
+ * variable (npm tokens, API keys, NPM_CONFIG_*, NODE_OPTIONS, LD_PRELOAD) that the root apply process might carry.
  * Shaped for a privileged step: apply runs it as root, runuser drops to the account. UNVERIFIED on a real host.
  */
 const asAccount = (p: Person, ctx: ResolvedConfig, ...argv: string[]) => [
-  "runuser", "-u", acct(p), "--", "env", `HOME=${accountHome(p, ctx)}`, `PATH=${SYSTEM_PATH}`, ...argv,
+  "runuser", "-u", acct(p), "--", "env", "-i", `HOME=${accountHome(p, ctx)}`, `PATH=${SYSTEM_PATH}`, ...argv,
 ];
 const isSeparate = (p: Person) => p.install === "separate";
+/** Whether `child` is `parent` or below it, by whole path segments. */
+const inside = (parent: string, child: string) => {
+  const rel = posix.relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith("../") && !posix.isAbsolute(rel));
+};
 /** The paseo binary the unit runs: the account's own for a separate install, the host's otherwise. */
 const daemonBinary = (p: Person, ctx: ResolvedConfig) => (isSeparate(p) ? join(npmBin(p, ctx), "paseo") : ctx.paseoBinary);
 /** Run systemctl against another account's user manager. Works only as root. UNVERIFIED on a real host. */
@@ -220,11 +226,15 @@ export const unixAccount: IsolationStrategy = {
           privileged: true,
         });
       } else if (other.isolation === "same-user") {
+        // A separate person's plan must not name the operator's home. A same-user PASEO_HOME under userHome (the
+        // default) is covered by verify-operator-home below, so the neighbour check is left out there.
+        const neighbour = join(ctx.homeBase, other.name);
+        if (isSeparate(person) && inside(ctx.userHome, neighbour)) continue;
         steps.push({
           id: `${person.name}.${other.name}.verify-unreadable-from-account`,
           description: `${a} cannot read ${other.name}'s PASEO_HOME (same-user daemon)`,
           kind: "command",
-          command: ["sudo", "-u", a, "test", "!", "-r", join(ctx.homeBase, other.name)],
+          command: ["sudo", "-u", a, "test", "!", "-r", neighbour],
           privileged: true,
         });
       }

@@ -81,6 +81,30 @@ the account.
 
 Estimated size: one focused slice, similar to the original planner.
 
+## 4a. Implemented behaviour and known limits (all UNVERIFIED on a real host)
+
+Verified by unit tests only (`test/ctl/review-fixes.test.ts`, `test/ctl/separate-plan*.test.ts`); no command was run on a host.
+
+- Account-level commands run as `runuser -u <acct> -- env -i HOME=<acctHome> PATH=/usr/local/bin:/usr/bin:/bin <argv>`.
+  `env -i` drops every other variable of the apply process (npm tokens, API keys, `NPM_CONFIG_*`, `NODE_OPTIONS`,
+  `LD_PRELOAD`), so they do not reach npm or its lifecycle scripts.
+- `plan <name>` and `apply <name>` for a separate person include only that person's own steps. The `same-user.*`
+  prerequisites and any check naming a same-user neighbour's `PASEO_HOME` under the operator's home are left out; the hand-run
+  `verify-operator-home` check covers that home. The only step that names `userHome` is that check.
+- `apply` compares each staged file with the plan before it runs any command, so an edit to a staged unit after render is
+  refused (render again and review).
+- A separate account home may not equal, contain or sit inside `userHome`, `homeBase`, the host `paseoBinary` or an absolute
+  `environmentPath` entry. The planner cannot see the disk, so it cannot tell whether a directory already exists: choose an
+  account name and `unixAccountHomeBase` that are new.
+- **Not resumable.** `apply` stops at the first failing step and has no per-step resume. The first step, `useradd`, fails once
+  the account exists, so after a failed install step (registry timeout, EACCES) a second `apply <name>` stops at `useradd`.
+  Run the remaining steps by hand from `apply.sh` (or remove the half-made account and start again). This is true for every
+  unix-account person, not only separate installs. A resume option is not built.
+- **Symlinks in account-owned paths.** Root creates `.local`, `.local/npm`, `.config` and the other account directories with
+  `install -d -o <acct>`. The account's own agents can replace one of them with a symlink after the first apply, and a later
+  root apply would follow it (chown and chmod the target, or create a directory in it). Before re-applying, check that these
+  paths are real directories (`test ! -L`). Not mitigated in code; household-level trust only (`04-threat-model.md` T20).
+
 ## 5. Migration: moving a person from shared to separate
 
 `planMigrate(config, name)` would produce: stop and disable the shared unit; create the account and install (§3); move

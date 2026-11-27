@@ -8,6 +8,8 @@ export interface PlanPerson {
   port: number;
   paseoHome: string;
   unixAccount?: string;
+  /** Set only for a separate install, so the plan of a person without install is unchanged. */
+  install?: "separate";
 }
 
 export interface Plan {
@@ -44,6 +46,7 @@ function describe(p: Person, ctx: ResolvedConfig, registry: IsolationRegistry): 
     port: p.port,
     paseoHome: registry.get(p.isolation).paseoHome(p, ctx),
     ...(p.unixAccount ? { unixAccount: p.unixAccount } : {}),
+    ...(p.install === "separate" ? { install: "separate" as const } : {}),
   };
 }
 
@@ -139,20 +142,27 @@ export function planRevoke(ctx: ResolvedConfig, name: string, registry: Isolatio
 }
 
 /**
- * Only one person's part of a plan: their own steps (ids starting `<name>.`) and the shared same-user prerequisites
- * (ids starting `same-user.`). Warnings are kept whole, because they describe the whole setup. The plan must already be
- * built from the whole config, so validation and port assignment still cover everyone.
+ * Only one person's part of a plan: their own steps (ids starting `<name>.`) and, unless they are a separate install,
+ * the shared same-user prerequisites (ids starting `same-user.`). A separate person's plan never carries those: they
+ * name the operator's home and are not that person's to run. Warnings are kept whole, because they describe the whole
+ * setup. The plan must already be built from the whole config, so validation and port assignment still cover everyone.
  */
 export function planForPerson(plan: Plan, name: string): Plan {
   const person = plan.people.find((p) => p.name === name);
   if (!person) throw new Error(`unknown person "${name}" (known: ${plan.people.map((p) => p.name).join(", ")})`);
+  const belongs = personStepFilter(plan, name);
   return {
     ...plan,
     people: [person],
-    steps: plan.steps.filter((s) => stepBelongsTo(s.id, name)),
+    steps: plan.steps.filter((s) => belongs(s.id)),
     verify: plan.verify.filter((s) => s.id.startsWith(`${name}.`)),
   };
 }
 
-export const stepBelongsTo = (stepId: string, name: string): boolean =>
-  stepId.startsWith(`${name}.`) || stepId.startsWith("same-user.");
+/** Which step ids `apply <name>` and `plan <name>` cover. Fails closed on an unknown person. */
+export function personStepFilter(plan: Plan, name: string): (stepId: string) => boolean {
+  const person = plan.people.find((p) => p.name === name);
+  if (!person) throw new Error(`unknown person "${name}" (known: ${plan.people.map((p) => p.name).join(", ")})`);
+  const separate = person.install === "separate";
+  return (stepId) => stepId.startsWith(`${name}.`) || (!separate && stepId.startsWith("same-user."));
+}

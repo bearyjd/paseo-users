@@ -42,7 +42,7 @@ const config = (people: Record<string, unknown>[] = [sep(), bob()], extra: Recor
 
 const accountHome = (acct: string) => `/home/${acct}`;
 /** Command prefix of every account-level command, as the docs/12 section 3 shape. */
-const asAcct = (acct: string) => ["runuser", "-u", acct, "--", "env", `HOME=${accountHome(acct)}`, `PATH=${SYSTEM_PATH}`];
+const asAcct = (acct: string) => ["runuser", "-u", acct, "--", "env", "-i", `HOME=${accountHome(acct)}`, `PATH=${SYSTEM_PATH}`];
 const startsWith = (argv: string[] | undefined, prefix: string[]) => !!argv && prefix.every((x, i) => argv[i] === x);
 
 /** Every string a step carries: description, argv, dir, file path and rendered content. */
@@ -273,8 +273,9 @@ describe("separate install: account-level commands", () => {
 
   it("runs the account's npm with a fixed PATH, never the operator's environment", () => {
     for (const s of plan.steps.filter((x) => x.id.includes(".install-"))) {
-      expect(s.command?.[5], s.id).toBe(`HOME=${accountHome(s.id.startsWith("ann.") ? "acct-ann" : "acct-bob")}`);
-      expect(s.command?.[6], s.id).toBe(`PATH=${SYSTEM_PATH}`);
+      expect(s.command?.[5], s.id).toBe("-i");
+      expect(s.command?.[6], s.id).toBe(`HOME=${accountHome(s.id.startsWith("ann.") ? "acct-ann" : "acct-bob")}`);
+      expect(s.command?.[7], s.id).toBe(`PATH=${SYSTEM_PATH}`);
     }
   });
 

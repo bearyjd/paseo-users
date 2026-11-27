@@ -6,7 +6,7 @@ import { ConfigError, parseConfig, PERSON_NAME, type RawConfig, type ResolvedCon
 import type { Detected, Detector } from "./detect.js";
 import { writeNotices } from "./notice.js";
 import { passphraseProblem } from "./passphrase.js";
-import { planForPerson, planHost, planRevoke, stepBelongsTo, type Plan } from "./plan.js";
+import { personStepFilter, planForPerson, planHost, planRevoke, type Plan } from "./plan.js";
 import { renderPlan, type RenderOptions, type RenderResult } from "./render.js";
 import { shellQuote, stepArgv } from "./shell.js";
 import { defaultConfigPath, ensurePrivateDir, readRawConfig, stateDir, UsageError, writeRawConfig, type HostEnv } from "./store.js";
@@ -469,7 +469,7 @@ async function cmdApply(args: string[], io: CliIo): Promise<number> {
     io.stderr(`refusing: ${rendered === undefined ? "nothing was rendered yet" : "the rendered plan was out of date"}. It is rendered now. Read ${r.outDir}/apply.sh, then run this command again.\n`);
     return 2;
   }
-  return runApply(plan, out, io, (id) => stepBelongsTo(id, name));
+  return runApply(plan, out, io, personStepFilter(plan, name));
 }
 
 async function cmdRevoke(args: string[], io: CliIo): Promise<number> {

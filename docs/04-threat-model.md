@@ -51,6 +51,7 @@ need core work (`05`) and OS isolation (`03` §5). Until then the honest stateme
 | T17 | Malicious plugin | Out of scope (operator trust). | Plugins are unsandboxed; document. |
 | T19 | **Shared LLM provider tokens readable by any agent** (owner decision to share accounts) | Provider access is an explicit allowance; usage attributed via session ownership and audit. | Tokens are not per-user secrets. Contain with rootless containers mounting only provider token dirs read-only; a hostile developer can still exfiltrate them. Household trust only. |
 | T18 | Relay/pairing links as credentials | n/a here. | A pairing link is the shared daemon password; in topology A it must stop granting owner (R1). |
+| T20 | **Account-owned path replaced by a symlink; root re-apply follows it** (unix-account, more paths with separate installs) | None in code. | `install -d -o` run as root follows a symlink the account planted. Check `test ! -L` on the account paths before re-applying; longer term create them as the account. Unverified on a real host. |
 
 ## Non-goals (stated so nobody assumes them)
 

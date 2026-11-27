@@ -24,7 +24,7 @@ const config = (people: Record<string, unknown>[] = [sep()], extra: Record<strin
 const isHomeCheck = (s: Step) => s.command?.slice(-3).join(" ") === "! -r /home/tester";
 const unitOf = (p: Plan, name: string) => p.steps.find((s) => s.id === `${name}.unit`)?.file?.content ?? "";
 const idx = (p: Plan, id: string) => p.steps.findIndex((s) => s.id === id);
-const AS_ACCT = ["runuser", "-u", "acct-ann", "--", "env", "HOME=/home/acct-ann", "PATH=/usr/local/bin:/usr/bin:/bin"];
+const AS_ACCT = ["runuser", "-u", "acct-ann", "--", "env", "-i", "HOME=/home/acct-ann", "PATH=/usr/local/bin:/usr/bin:/bin"];
 
 describe("separate install plan: nothing of the operator's leaks", () => {
   const ctx = config([sep(), sep({ name: "bob", unixAccount: "acct-bob", providers: ["opencode"] })]);
