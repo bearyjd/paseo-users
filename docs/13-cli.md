@@ -14,6 +14,7 @@ npm run ctl:build && npm link          # builds dist/tools and puts `paseo-users
 paseo-users init --listen <addr>       # creates the config; finds paseo on PATH and your home by itself
 paseo-users add ann --shared
 paseo-users add bob --shared --acknowledge-shared-history
+paseo-users add cy --separate --unix-account cy --providers claude,codex --paseo-version 0.17.4   # own account and installs
 paseo-users plan                       # or: plan ann
 paseo-users render                     # writes the plan, units, secrets and notice pages; read apply.sh
 paseo-users apply ann --yes --i-understand-this-changes-the-host
@@ -46,14 +47,14 @@ A value flag may be given once. A repeated flag (for example two `--providers`) 
 | --- | --- | --- |
 | `init [--from f] [--listen a] [--port n] [--existing name:port]... [--paseo-binary p] [--path P] [--web-ui] [--force]` | Create the config. Refuses to overwrite without `--force`. | No |
 | `add <name> --shared [--port n] [--acknowledge-shared-history]` | Add a same-user person. | No |
-| `add <name> --separate --unix-account <acct> --providers <id,id> [--paseo-version x.y.z] [--port n]` | Add a person with their own computer account and own installs ([12](12-separate-installs-plan.md)). Nothing defaults: account, providers and an exact version are required (the version may be left out once one is stored; a different one is refused). The result is validated before anything is written; a refusal exits 2 and leaves the config as it was. Providers: `claude`, `codex`, `opencode`. The person logs in to each provider by hand. **UNVERIFIED on a real host.** | No |
+| `add <name> --separate --unix-account <acct> --providers <id,id> [--paseo-version x.y.z] [--port n]` | Add a person with their own computer account and own installs ([12](12-separate-installs-plan.md)). Nothing defaults: account, providers and an exact version are required (the version may be left out once one is stored; a different one is refused). The result is validated before anything is written; a refusal exits 2 and leaves the config as it was. Providers: `claude`, `codex`, `opencode`. The person logs in to each provider by hand. `--shared` and `--separate` exclude each other and one is required; `--unix-account`, `--providers` and `--paseo-version` are refused with `--shared`, and `--acknowledge-shared-history` with `--separate` (all exit 2). A separate person is not a neighbour, so no acknowledgement is needed for them. **UNVERIFIED on a real host.** | No |
 | `remove <name>` | Remove from the config only. Run `revoke` first if they were ever applied. Also deletes that name's staged password files (`secrets/<name>.*`) in the default render directory, so a later person with the same name gets a new password; delete them yourself in any `--out` directory you rendered into. `add` does the same for its name. Only the default config does this: with another `--config` file the default render directory is left alone. `init --force` does it for every name that is gone from the replaced config or is now a different kind of person (another account or mode). Removing someone writes the auto-assigned port of the people after them into the config, so their ports do not move. `add` refuses a `--port` that would move an earlier person's port (exit 2, config unchanged). | No |
-| `list [--json]` | People, mode (`shared`, `separate`, or `unix-account` for a host-binary account), port and `systemctl --user is-active paseo-<name>.service`. Anything it cannot tell is `unknown`. | No (read-only) |
-| `plan [name] [--json]` | Show the plan. With a name: that person's steps plus the `same-user.` prerequisites, still validated against everyone. | No |
-| `render [--out d] [--rotate name\|all]` | Write the plan, `apply.sh`, units, secrets and `notice-<name>.md`. | No |
+| `list [--json]` | People, mode (`shared`, `separate`, or `unix-account` for an account that uses the host binary), port and state. State is `systemctl --user is-active paseo-<name>.service`, asked only for `shared` people (their daemon runs in your user manager). Every unix-account person shows `unknown`, because their daemon is in another account's user manager, as does anything the command cannot tell. | No (read-only) |
+| `plan [name] [--json]` | Show the plan. With a name: that person's steps plus, for a shared person, the `same-user.` prerequisites, still validated against everyone. A separate person's plan has only their own steps and names none of your home, host `paseoBinary` or `environmentPath`. `--json` carries `install` and `providers` for a separate person. | No |
+| `render [--out d] [--rotate name\|all]` | Write the plan, `apply.sh`, units, secrets and `notice-<name>.md` (a separate person gets the separate page). | No |
 | `revoke-plan <name> [--out d] [--json]` | Show (and optionally render) the revoke plan. | No |
 | `revoke <name> [--out d] [--apply --yes --i-understand-this-changes-the-host]` | Render the revoke plan into `revoke-<name>`; apply only with the flags. | Only with `--apply` and both flags |
-| `migrate <name> [--out d] [--apply --yes --i-understand-this-changes-the-host]` | Move a person from the shared install to their own account ([12](12-separate-installs-plan.md) section 5). The stored config must already describe them as `unix-account` + `install: separate` on the port they use now, or it refuses (exit 2). Renders the plan into `migrate-<name>`, with no new password and no `secrets/`; applies only with the flags. Run apply twice: as your normal user (stops the shared unit), then as root. The first root step is a guard that fails while the old daemon may still run, so the move cannot happen under a live daemon whichever phase you run first. It also refuses an `--out` (or default directory) inside the old PASEO_HOME or env file, and its root preflight checks the old unit still listens on the configured port. If a step fails after the move, it says so and lists the steps still to run by hand from `apply.sh`. **UNVERIFIED on a real host.** | Only with `--apply` and both flags |
+| `migrate <name> [--out d] [--apply --yes --i-understand-this-changes-the-host]` | Move a person from the shared install to their own account ([12](12-separate-installs-plan.md) section 5). The stored config must already describe them as `unix-account` + `install: separate` on the port they use now, or it refuses (exit 2). `add` refuses a name that exists, so change their entry in the config file (`isolation`, `unixAccount`, `install`, `providers`, `port`, and a top-level `paseoVersion`); `remove` then `add --separate --port <their port>` should also work (not exercised by a test). Renders the plan into `migrate-<name>`, with no new password and no `secrets/`; applies only with the flags. Run apply twice: as your normal user (stops the shared unit), then as root. The first root step is a guard that fails while the old daemon may still run, so the move cannot happen under a live daemon whichever phase you run first. It also refuses an `--out` (or default directory) inside the old PASEO_HOME or env file, and its root preflight checks the old unit still listens on the configured port. If a step fails after the move, it says so and lists the steps still to run by hand from `apply.sh`. **UNVERIFIED on a real host.** | Only with `--apply` and both flags |
 | `password <name> [--stdin]` | New random password, or one line from stdin as a chosen passphrase. Updates the rendered secrets only and prints the manual steps. | No |
 | `apply <name> --yes --i-understand-this-changes-the-host [--out d]` | Apply only that person's steps. | Yes |
 | `help`, `--help`, `--version` | | No |
@@ -104,8 +105,11 @@ The passphrase sits in plaintext in a 0600 file, like generated passwords (see t
   runner. Root runs only privileged steps, a normal user only the others.
 - `apply <name>` refuses when the render directory has no `plan.json` or it no longer matches the config. It renders the
   current plan and stops, so you read `apply.sh` before running the command again. (It does not apply what you have not seen.)
-- Only that person's steps run. The same-user prerequisites (`same-user.*`) run too, and re-running them is harmless.
+- Only that person's steps run. For a shared person the same-user prerequisites (`same-user.*`) run too, and re-running them is harmless. A separate person's apply has none of them.
   Applying a person does not restart a daemon that is already running.
+- `apply` compares each staged file with the plan before it runs any command, and stops at the first failing step.
+  It is not resumable: for any unix-account person a second `apply <name>` stops at `useradd` ([12](12-separate-installs-plan.md) section 4a). After a failed install step, run the rest by hand from `apply.sh`.
+- A separate person must log in to each provider by hand, as their own account. `apply` never logs in and copies no credential.
 
 ## Exit codes
 
@@ -117,6 +121,6 @@ The passphrase sits in plaintext in a 0600 file, like generated passwords (see t
 
 ## Unverified
 
-Everything on a real host: `init` detection against real units and `PATH`, `list` against a real user manager,
+Everything on a real host, including all of `add --separate`, the separate-install `plan`/`apply` steps (`runuser`, the npm installs, the provider logins, `systemctl --machine`) and `migrate` ([12](12-separate-installs-plan.md)). Also: `init` detection against real units and `PATH`, `list` against a real user manager,
 `apply <name>` on a real machine, passphrase characters in a real daemon, `npm link` on your shell. Covered by tests with
 fakes: parsing, validation, config and secret file modes, the plan filter, the steps handed to the runner, the refusals.

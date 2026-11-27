@@ -36,3 +36,4 @@ core code has been changed in this repository. See `docs/07-roadmap.md` and `doc
 - Fail-closed daemon-permission mapping and Profiles integration contract v1.
 - Plugin entry with a read-only `users.status.get` RPC reporting `enforcement: "none"`.
 - Disposable-daemon probes confirming upstream blockers and plugin load.
+- Separate installs (`add --separate`, `migrate`, mode in `list`; `docs/12`, `docs/13`); supersedes the `--separate` refusal above. Unverified on a real host.
