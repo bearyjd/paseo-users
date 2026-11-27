@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import { z } from "zod";
 import { DEFAULT_ISOLATION, defaultRegistry } from "./isolation/registry.js";
 import type { IsolationRegistry } from "./isolation/index.js";
+import { PROVIDER_IDS } from "./providers.js";
 
 /** Paseo's default daemon port. A person's daemon there would collide with, or be mistaken for, the existing daemon. */
 export const DEFAULT_PASEO_PORT = 6767;
@@ -21,6 +22,9 @@ const absPath = (what: string) =>
       (p) => SAFE_PATH.test(p) && p.length > 1 && posix.normalize(p) === p && !p.endsWith("/"),
       `${what} must be a normalized absolute path using only [A-Za-z0-9._+@/-], not "/"`,
     );
+
+/** Exact version: x.y.z with an optional -prerelease suffix. No ranges, tags, build metadata or whitespace. */
+const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
 
 const port = z.number().int().min(1024, "port must be >= 1024").max(65535);
 
@@ -44,6 +48,13 @@ const PersonSchema = z
      * `people`, or any `existingDaemons`) must list "shared-provider-history".
      */
     acknowledge: z.array(z.string()).optional(),
+    /**
+     * Opt-in install mode. "separate" (unix-account only) gives the account its own paseo and provider CLIs, see
+     * docs/12-separate-installs-plan.md. "shared" (same-user only) is today's behaviour. Absent keeps today's behaviour.
+     */
+    install: z.enum(["shared", "separate"]).optional(),
+    /** Provider CLIs to install for a separate person. Ids from the provider catalog. */
+    providers: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -60,6 +71,8 @@ export const ConfigSchema = z
     basePort: port,
     paseoBinary: absPath("paseoBinary"),
     homeBase: absPath("homeBase").optional(),
+    /** Exact paseo version installed for every separate person. Required when one exists, an error otherwise. */
+    paseoVersion: z.string().optional(),
     /**
      * PATH for same-user daemons, as a colon-separated list of absolute directories. systemd user
      * units start with a minimal PATH, so without this the daemon may not find provider CLIs
@@ -86,6 +99,10 @@ export interface Person {
   /** Resolved: explicit or assigned from basePort. */
   port: number;
   unixAccount?: string;
+  /** Set only for a separate install. Absent means today's behaviour (host paseoBinary, or shared). */
+  install?: "separate";
+  /** Provider ids to install; always empty unless `install` is "separate". */
+  providers: string[];
 }
 
 export interface ResolvedConfig {
@@ -94,6 +111,8 @@ export interface ResolvedConfig {
   paseoBinary: string;
   homeBase: string;
   environmentPath?: string;
+  /** Present only when at least one person is separate. */
+  paseoVersion?: string;
   unixAccountHomeBase: string;
   webUi: boolean;
   allowAllInterfaces: boolean;
@@ -173,7 +192,15 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
       assigned = next;
       taken.add(next);
     }
-    return { name: p.name, isolation: p.isolation, port: assigned, ...(p.unixAccount ? { unixAccount: p.unixAccount } : {}) };
+    const separate = p.install === "separate";
+    return {
+      name: p.name,
+      isolation: p.isolation,
+      port: assigned,
+      ...(p.unixAccount ? { unixAccount: p.unixAccount } : {}),
+      ...(separate ? { install: "separate" as const } : {}),
+      providers: separate ? [...(p.providers ?? [])] : [],
+    };
   });
   for (const p of people) {
     if (p.port > 65535) issues.push(`${p.name}: no free port left at or above basePort`);
@@ -185,6 +212,7 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
     paseoBinary: c.paseoBinary,
     homeBase,
     ...(c.environmentPath ? { environmentPath: c.environmentPath } : {}),
+    ...(c.paseoVersion !== undefined && c.people.some((p) => p.install === "separate") ? { paseoVersion: c.paseoVersion } : {}),
     unixAccountHomeBase: c.unixAccountHomeBase,
     webUi: c.webUi,
     allowAllInterfaces: c.allowAllInterfaces,
@@ -206,6 +234,36 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
           `daemons on this machine. Accept that trade-off by adding "acknowledge": ["shared-provider-history"] to ${p.name} ` +
           `(or use: paseo-users add ${p.name} --shared --acknowledge-shared-history)`,
       );
+    }
+  }
+
+  // Install mode. Everything given for a person who is not separate is an error, never silently ignored.
+  for (const p of c.people) {
+    if (p.install === "separate") {
+      if (p.isolation !== "unix-account") issues.push(`${p.name}: install "separate" requires isolation "unix-account"`);
+      if (p.providers === undefined || p.providers.length === 0) {
+        issues.push(`${p.name}: install "separate" requires providers, a non-empty list (known: ${PROVIDER_IDS.join(", ")})`);
+      }
+      for (const id of p.providers ?? []) {
+        if (!PROVIDER_IDS.includes(id)) issues.push(`${p.name}: unknown provider "${id}" (known: ${PROVIDER_IDS.join(", ")})`);
+      }
+      for (const id of dupes(p.providers ?? [])) issues.push(`${p.name}: duplicate provider "${id}"`);
+      if (c.paseoVersion === undefined) {
+        issues.push(`${p.name}: top-level paseoVersion is required for install "separate" (exact x.y.z)`);
+      }
+    } else {
+      if (p.install === "shared" && p.isolation !== DEFAULT_ISOLATION) {
+        issues.push(`${p.name}: install "shared" requires isolation "${DEFAULT_ISOLATION}"`);
+      }
+      if (p.providers !== undefined) issues.push(`${p.name}: providers is only valid with install "separate"`);
+    }
+  }
+  if (c.paseoVersion !== undefined) {
+    if (!EXACT_VERSION.test(c.paseoVersion)) {
+      issues.push(`paseoVersion must be an exact version (x.y.z, optional -prerelease), not a range or tag: "${c.paseoVersion}"`);
+    }
+    if (!c.people.some((p) => p.install === "separate")) {
+      issues.push(`paseoVersion is only used by separate installs, but no person has install "separate"`);
     }
   }
 
