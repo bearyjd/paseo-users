@@ -147,9 +147,8 @@ export const unixAccount: IsolationStrategy = {
       {
         id: `${n}.llm-login`,
         description: isSeparate(person)
-          ? `MANUAL: LLM logins are NOT shared and the plan never logs in for you. As ${a} (for example: sudo -iu ${a}, with ` +
-            `${npmBin(person, ctx)} on PATH), log in to each installed provider: ` +
-            `${person.providers.map((id) => `${id}: ${getProvider(id).loginHint}`).join("; ")}. ` +
+          ? `MANUAL: LLM logins are NOT shared and the plan never logs in for you. Log in as ${a} (for example: sudo -iu ${a}, with ` +
+            `${npmBin(person, ctx)} on PATH), once per provider, see the ${n}.login-* steps. ` +
             `Or put an API key in ${optionalEnvFile(person, ctx)} (0600, owned by ${a}; the unit reads it if present). ` +
             `Whether these login flows work for a per-account npm install is UNVERIFIED.`
           :
@@ -157,6 +156,7 @@ export const unixAccount: IsolationStrategy = {
           `in ${optionalEnvFile(person, ctx)} (0600, owned by ${a}; the unit reads it if present). Which variables each provider reads is UNVERIFIED.`,
         kind: "manual",
       },
+      ...(isSeparate(person) ? loginSteps(person, ctx) : []),
     ];
   },
 
@@ -237,6 +237,13 @@ export const unixAccount: IsolationStrategy = {
         command: asAccount(person, ctx, daemonBinary(person, ctx), "--version"),
         privileged: true,
       });
+      steps.push({
+        id: `${person.name}.verify-operator-home`,
+        description: `${a} cannot read the operator's home directory (hand-run; UNVERIFIED on a real host)`,
+        kind: "command",
+        command: asAccount(person, ctx, "test", "!", "-r", ctx.userHome),
+        privileged: true,
+      });
     }
     steps.push({
       id: `${person.name}.verify-app`,
@@ -292,4 +299,22 @@ function installSteps(person: Person, ctx: ResolvedConfig, root: (s: Omit<Step, 
       }),
     ),
   ];
+}
+
+/**
+ * One manual login step per listed provider. Never runs a login, never copies or references a credential: the person
+ * logs in themselves as their own account. Whether each login flow works for a per-account npm install is UNVERIFIED.
+ */
+function loginSteps(person: Person, ctx: ResolvedConfig): Step[] {
+  const a = acct(person);
+  return person.providers.map((id) => {
+    const pr = getProvider(id);
+    return {
+      id: `${person.name}.login-${pr.id}`,
+      description:
+        `MANUAL: log in to ${pr.id} as ${a} (for example: sudo -iu ${a}, with ${npmBin(person, ctx)} on PATH): ${pr.loginHint}. ` +
+        `This login is not shared with any other account. UNVERIFIED on a real host.`,
+      kind: "manual",
+    };
+  });
 }

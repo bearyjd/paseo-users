@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../../tools/ctl/config.js";
 import { planHost, planRevoke, planForPerson, type Plan } from "../../tools/ctl/plan.js";
+import type { Step } from "../../tools/ctl/isolation/index.js";
 import { getProvider } from "../../tools/ctl/providers.js";
 import { stepArgv } from "../../tools/ctl/shell.js";
 import { rawCfg } from "./helpers.js";
@@ -19,6 +20,8 @@ const sep = (extra: Record<string, unknown> = {}) => ({
 const config = (people: Record<string, unknown>[] = [sep()], extra: Record<string, unknown> = {}) =>
   parseConfig(rawCfg({ paseoVersion: VERSION, environmentPath: "%h/operator-secret-dir:/opt/operator-tools/bin", people, ...extra }));
 
+/** The one hand-run check that names the operator's home: `test ! -r <userHome>` run as a separate account. */
+const isHomeCheck = (s: Step) => s.command?.slice(-3).join(" ") === "! -r /home/tester";
 const unitOf = (p: Plan, name: string) => p.steps.find((s) => s.id === `${name}.unit`)?.file?.content ?? "";
 const idx = (p: Plan, id: string) => p.steps.findIndex((s) => s.id === id);
 const AS_ACCT = ["runuser", "-u", "acct-ann", "--", "env", "HOME=/home/acct-ann", "PATH=/usr/local/bin:/usr/bin:/bin"];
@@ -31,9 +34,11 @@ describe("separate install plan: nothing of the operator's leaks", () => {
     ["revoke plan", planRevoke(ctx, "ann")],
   ];
 
+  // The operator's home may appear only in the one hand-run verify step that proves the account cannot read it.
   it.each(parts)("%s contains no operator path, host paseoBinary or environmentPath", (_label, plan) => {
-    const text = JSON.stringify(plan);
+    const text = JSON.stringify({ ...plan, verify: plan.verify.filter((s) => !isHomeCheck(s)) });
     for (const bad of OPERATOR_PATHS) expect(text, bad).not.toContain(bad);
+    for (const s of plan.verify) expect(JSON.stringify(s), s.id).not.toMatch(/\/opt\/paseo|\/opt\/operator-tools|operator-secret-dir/);
   });
 
   it("the unit runs the account's own paseo, not the host binary", () => {
@@ -103,11 +108,9 @@ describe("separate install plan: install steps", () => {
     }
   });
 
-  it("keeps the manual login step, naming each provider's login hint and the account", () => {
+  it("keeps the general manual login step, naming the account and that the flow is unverified", () => {
     const login = plan.steps.find((s) => s.id === "ann.llm-login");
     expect(login?.kind).toBe("manual");
-    expect(login?.description).toContain(getProvider("claude").loginHint);
-    expect(login?.description).toContain(getProvider("codex").loginHint);
     expect(login?.description).toContain("acct-ann");
     expect(login?.description).toMatch(/UNVERIFIED/);
   });

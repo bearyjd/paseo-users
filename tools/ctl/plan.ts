@@ -76,6 +76,18 @@ function warningsFor(people: Person[], ctx: ResolvedConfig): string[] {
         "its own provider login, or an API key in that daemon's environment",
     );
   }
+  const separate = unix.filter((p) => p.install === "separate");
+  if (separate.length > 0) {
+    const names = separate.map((p) => p.name).join(", ");
+    w.push(
+      `provider CLIs for separate installs (${names}) are installed unpinned: the latest version at install time, not a ` +
+        "version you chose (only paseo itself is pinned by paseoVersion)",
+    );
+    w.push(
+      `each separate person (${names}) needs their own logins: log in to every listed provider by hand as that account; ` +
+        "no login or credential is copied from you or from anyone else",
+    );
+  }
   if (same.length + unix.length > 0) {
     w.push("daemon passwords are stored in plaintext in 0600 EnvironmentFiles (paseo daemon set-password has no documented non-interactive input)");
   }
