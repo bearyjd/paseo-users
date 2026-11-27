@@ -1,0 +1,5 @@
+paseo-users
+Copyright 2026 paseo-users contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE), the same license as upstream Paseo and the
+@getpaseo/plugin SDK, so that any core extension developed here can be offered upstream without relicensing.

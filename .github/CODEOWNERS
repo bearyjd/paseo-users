@@ -1,0 +1,7 @@
+# Everything needs the maintainer's review. Listed separately so the security-sensitive paths stay visible if ownership grows.
+*                       @bearyjd
+/server/kernel/         @bearyjd
+/shared/                @bearyjd
+/docs/04-threat-model.md @bearyjd
+/SECURITY.md            @bearyjd
+/.github/               @bearyjd
