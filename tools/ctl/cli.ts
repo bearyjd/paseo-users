@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { applyPlan, ApplyRefused, type CommandRunner } from "./apply.js";
 import { ConfigError, parseConfig, PERSON_NAME, type RawConfig, type ResolvedConfig } from "./config.js";
@@ -8,7 +8,7 @@ import { writeNotices } from "./notice.js";
 import { passphraseProblem } from "./passphrase.js";
 import { personStepFilter, planForPerson, planHost, planRevoke, type Plan } from "./plan.js";
 import { renderPlan, type RenderOptions, type RenderResult } from "./render.js";
-import { shellQuote, stepArgv } from "./shell.js";
+import { secretSourceRel, shellQuote, stepArgv } from "./shell.js";
 import { defaultConfigPath, ensurePrivateDir, readRawConfig, stateDir, UsageError, writeRawConfig, type HostEnv } from "./store.js";
 
 /** Read-only command runner that captures stdout. Used by `list` only. */
@@ -99,7 +99,11 @@ interface Parsed {
   value(flag: string): string | undefined;
 }
 
-function parseFlags(args: string[], valueFlags: string[], boolFlags: string[]): Parsed {
+/**
+ * A value flag may appear once unless it is listed in `repeatable`: a second value is refused, never last-wins, so a
+ * bad earlier value cannot be hidden behind a good later one.
+ */
+function parseFlags(args: string[], valueFlags: string[], boolFlags: string[], repeatable: string[] = []): Parsed {
   const positional: string[] = [];
   const values = new Map<string, string[]>();
   const bools = new Set<string>();
@@ -108,6 +112,7 @@ function parseFlags(args: string[], valueFlags: string[], boolFlags: string[]): 
     if (valueFlags.includes(a)) {
       const v = args[++i];
       if (v === undefined) throw new UsageError(`${a} needs a value`);
+      if (values.has(a) && !repeatable.includes(a)) throw new UsageError(`${a} was given more than once: give it once`);
       values.set(a, [...(values.get(a) ?? []), v]);
     } else if (boolFlags.includes(a)) bools.add(a);
     else if (a.startsWith("--")) throw new UsageError(`unknown flag ${a}`);
@@ -196,6 +201,24 @@ async function outDirFor(io: CliIo, p: Parsed, leaf: string): Promise<string> {
   return out;
 }
 
+/**
+ * Deletes the staged password and .env of a person name from the default render directory, so a name that is removed
+ * and later given to someone else never inherits the previous person's password. Only the default directory is known:
+ * one rendered with --out is the operator's to clean. Returns false when the state directory cannot be located.
+ */
+async function forgetStagedSecrets(io: CliIo, name: string): Promise<boolean> {
+  if (!PERSON_NAME.test(name)) return false;
+  let secrets: string;
+  try {
+    secrets = join(stateDir(io.env ?? {}), "render", "secrets");
+  } catch {
+    return false;
+  }
+  await rm(join(secrets, `${name}.password`), { force: true });
+  await rm(join(secrets, secretSourceRel(name).replace(/^secrets\//, "")), { force: true });
+  return true;
+}
+
 const APPLY_FLAGS = ["--yes", "--i-understand-this-changes-the-host"];
 const hasApplyFlags = (p: Parsed) => APPLY_FLAGS.every((f) => p.bools.has(f));
 const REFUSAL = "refusing: apply changes the host. Pass --yes and --i-understand-this-changes-the-host after reading apply.sh.\n";
@@ -231,7 +254,7 @@ const isSameUser = (p: { isolation?: string | undefined }) => (p.isolation ?? "s
 // ---------------------------------------------------------------- commands that only edit the stored config
 
 async function cmdInit(args: string[], io: CliIo): Promise<number> {
-  const p = parseFlags(args, ["--from", "--listen", "--port", "--existing", "--paseo-binary", "--path", "--config"], ["--web-ui", "--force"]);
+  const p = parseFlags(args, ["--from", "--listen", "--port", "--existing", "--paseo-binary", "--path", "--config"], ["--web-ui", "--force"], ["--existing"]);
   if (p.positional.length > 0) throw new UsageError(`unexpected argument ${p.positional[0]}`);
   const store = storeFor(io, p);
   const exists = await stat(store.file).then(() => true, () => false);
@@ -324,6 +347,7 @@ async function cmdAdd(args: string[], io: CliIo): Promise<number> {
   const next: RawConfig = { ...raw, people };
   const resolved = parseConfig(next); // refuses (ConfigError) before anything is written
   await writeRawConfig(store.file, next, store.ownDir);
+  await forgetStagedSecrets(io, name);
   const added = resolved.people.find((x) => x.name === name);
   io.stdout(`Added ${name} (shared, same Linux user) on port ${added?.port}. The host was not changed.\n`);
   if (widened.length) io.stdout(`Also recorded the shared-history acknowledgement for: ${widened.join(", ")}\n`);
@@ -360,6 +384,7 @@ async function addSeparate(p: Parsed, name: string, port: number | undefined, st
   const next: RawConfig = { ...raw, paseoVersion, people: [...(raw.people ?? []), person] };
   const resolved = parseConfig(next); // refuses (ConfigError) before anything is written: exact version, known providers, account rules
   await writeRawConfig(store.file, next, store.ownDir);
+  await forgetStagedSecrets(io, name);
   const added = resolved.people.find((x) => x.name === name);
   io.stdout(
     `Added ${name} (separate: own computer account, own installs of paseo ${paseoVersion} and ${providers.join(", ")}) on port ${added?.port}. The host was not changed.\n`,
@@ -385,7 +410,13 @@ async function cmdRemove(args: string[], io: CliIo): Promise<number> {
   const next: RawConfig = remaining.some((x) => x.install === "separate") ? { ...raw, people: remaining } : { ...rest, people: remaining };
   if (next.people.length > 0) parseConfig(next);
   await writeRawConfig(store.file, next, store.ownDir);
+  const forgot = await forgetStagedSecrets(io, name);
   io.stdout(`Removed ${name} from the config. The host is NOT changed: their daemon, files and password still exist.\n`);
+  io.stdout(
+    forgot
+      ? `The staged password files for ${name} in the default render directory were deleted, so a new ${name} gets a new password. If you rendered into another --out directory, delete secrets/${name}.* there.\n`
+      : `The default render directory could not be located: delete secrets/${name}.* in any directory you rendered into, so a new ${name} gets a new password.\n`,
+  );
   io.stdout(`If they were ever applied, run "paseo-users revoke ${name}" BEFORE removing them (the plan needs the config entry).\n`);
   return 0;
 }

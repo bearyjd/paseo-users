@@ -4,7 +4,7 @@ import type { Plan } from "./plan.js";
 import { fileSourceRel, secretSourceRel, stepArgv } from "./shell.js";
 
 export interface CommandRunner {
-  /** Runs one argv (no shell) with the output directory as cwd. Never called by tests with a real implementation. */
+  /** Runs one argv (no shell) with the output directory as cwd, or "/" for a command that runs as another account. Never called by tests with a real implementation. */
   run(argv: string[], opts: { cwd: string }): Promise<{ code: number }>;
 }
 
@@ -42,10 +42,19 @@ export async function applyPlan(plan: Plan, outDirInput: string, runner: Command
 
   // Staged files must be exactly what the reviewed plan says, or a unit edited after render would be installed as root.
   // Checked for every selected file step before the first command runs, whichever phase runs it. Secret files hold no
-  // plan content (they are written from secrets/ at render), so only existence is checked for those, below.
+  // plan content (they are written from secrets/ at render), so only their existence is checked, here too: a staged
+  // secret that is gone must be found before the first command, not after an account was already created.
   for (const step of plan.steps) {
     if (opts.only && !opts.only(step.id)) continue;
-    if (step.kind !== "file" || step.file?.content === undefined) continue;
+    if (step.kind !== "file" || !step.file) continue;
+    if (step.file.secretRef) {
+      const secret = secretSourceRel(step.file.secretRef);
+      await access(resolve(outDir, secret)).catch(() => {
+        throw new ApplyRefused(`${secret} is missing from ${outDir}: render again`);
+      });
+      continue;
+    }
+    if (step.file.content === undefined) continue;
     const src = fileSourceRel(step.file.path);
     const staged = await readFile(resolve(outDir, src), "utf8").catch(() => undefined);
     if (staged === undefined) throw new ApplyRefused(`${src} is missing from ${outDir}: render again`);
@@ -72,7 +81,9 @@ export async function applyPlan(plan: Plan, outDirInput: string, runner: Command
       });
     }
     result.commands.push(argv);
-    const { code } = await runner.run(argv, { cwd: outDir });
+    // Staged sources are relative to the output directory. A command that runs as an account must not start there: the
+    // directory may sit under the operator's home, and env -i does not change the working directory.
+    const { code } = await runner.run(argv, { cwd: argv[0] === "runuser" ? "/" : outDir });
     if (code !== 0) {
       result.ok = false;
       result.failed = { id: step.id, code };

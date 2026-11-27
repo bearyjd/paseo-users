@@ -38,6 +38,13 @@ const inside = (parent: string, child: string) => {
  */
 const isOperatorPath = (path: string, ctx: ResolvedConfig) =>
   [ctx.userHome, ctx.paseoBinary, ...(ctx.environmentPath ?? "").split(":").filter((e) => e.startsWith("/"))].some((o) => inside(o, path));
+/**
+ * Whether naming `path` in a separate person's plan would disclose an operator value: the path is, or is under, one,
+ * or is a directory that contains one (a legacy account whose home holds the host paseoBinary).
+ */
+const revealsOperatorPath = (path: string, ctx: ResolvedConfig) =>
+  isOperatorPath(path, ctx) ||
+  [ctx.userHome, ctx.paseoBinary, ...(ctx.environmentPath ?? "").split(":").filter((e) => e.startsWith("/"))].some((o) => inside(path, o));
 /** The paseo binary the unit runs: the account's own for a separate install, the host's otherwise. */
 const daemonBinary = (p: Person, ctx: ResolvedConfig) => (isSeparate(p) ? join(npmBin(p, ctx), "paseo") : ctx.paseoBinary);
 /** Run systemctl against another account's user manager. Works only as root. UNVERIFIED on a real host. */
@@ -203,6 +210,8 @@ export const unixAccount: IsolationStrategy = {
     ];
     for (const other of others) {
       if (other.isolation === "unix-account") {
+        // The command below runs with the neighbour's HOME. Where that would disclose an operator path, leave the check out.
+        if (isSeparate(person) && revealsOperatorPath(accountHome(other, ctx), ctx)) continue;
         steps.push({
           id: `${person.name}.${other.name}.verify-unreadable`,
           description: `${other.unixAccount} cannot read ${person.name}'s PASEO_HOME`,

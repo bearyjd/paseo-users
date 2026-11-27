@@ -380,9 +380,11 @@ describe("collects every issue, like the rest of the config", () => {
     expect(issues.some((i) => /ann: .*providers/.test(i))).toBe(true);
   });
 
-  it("leaves the shared-provider-history acknowledgement rule unchanged for same-user neighbours of a separate person", () => {
-    fails(rawCfg({ paseoVersion: VERSION, people: [sep(), { name: "bob" }] }), /bob: same-user people share/);
-    expect(() => parseConfig(rawCfg({ paseoVersion: VERSION, people: [sep(), { name: "bob", acknowledge: ["shared-provider-history"] }] }))).not.toThrow();
+  it("a separate neighbour does not make a shared person need the shared-history acknowledgement, a shared one still does", () => {
+    // A separate person has their own Linux user, so they share no provider history with the shared person.
+    expect(() => parseConfig(rawCfg({ paseoVersion: VERSION, people: [sep(), { name: "bob" }] }))).not.toThrow();
+    fails(rawCfg({ paseoVersion: VERSION, people: [sep(), { name: "bob" }, { name: "cy" }] }), /bob: same-user people share/);
+    expect(() => parseConfig(rawCfg({ paseoVersion: VERSION, people: [sep(), { name: "bob", acknowledge: ["shared-provider-history"] }, { name: "cy", acknowledge: ["shared-provider-history"] }] }))).not.toThrow();
   });
 
   it("a separate person needs no acknowledgement of its own", () => {

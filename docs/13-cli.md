@@ -40,12 +40,14 @@ below applies: add `"acknowledge": ["shared-provider-history"]` to each same-use
 
 ## Commands
 
+A value flag may be given once. A repeated flag (for example two `--providers`) is refused with exit 2; only `init --existing` may repeat. Apply runs commands that act as an account (`runuser ...`) from `/`, never from the render directory, and checks that every staged secret of the selected steps exists before it runs the first command.
+
 | Command | What it does | Changes the host |
 | --- | --- | --- |
 | `init [--from f] [--listen a] [--port n] [--existing name:port]... [--paseo-binary p] [--path P] [--web-ui] [--force]` | Create the config. Refuses to overwrite without `--force`. | No |
 | `add <name> --shared [--port n] [--acknowledge-shared-history]` | Add a same-user person. | No |
 | `add <name> --separate --unix-account <acct> --providers <id,id> [--paseo-version x.y.z] [--port n]` | Add a person with their own computer account and own installs ([12](12-separate-installs-plan.md)). Nothing defaults: account, providers and an exact version are required (the version may be left out once one is stored; a different one is refused). The result is validated before anything is written; a refusal exits 2 and leaves the config as it was. Providers: `claude`, `codex`, `opencode`. The person logs in to each provider by hand. **UNVERIFIED on a real host.** | No |
-| `remove <name>` | Remove from the config only. Run `revoke` first if they were ever applied. | No |
+| `remove <name>` | Remove from the config only. Run `revoke` first if they were ever applied. Also deletes that name's staged password files (`secrets/<name>.*`) in the default render directory, so a later person with the same name gets a new password; delete them yourself in any `--out` directory you rendered into. `add` does the same for its name. | No |
 | `list [--json]` | People, mode (`shared`, `separate`, or `unix-account` for a host-binary account), port and `systemctl --user is-active paseo-<name>.service`. Anything it cannot tell is `unknown`. | No (read-only) |
 | `plan [name] [--json]` | Show the plan. With a name: that person's steps plus the `same-user.` prerequisites, still validated against everyone. | No |
 | `render [--out d] [--rotate name\|all]` | Write the plan, `apply.sh`, units, secrets and `notice-<name>.md`. | No |
@@ -74,10 +76,10 @@ the other commands say so and stop until a person exists. The config holds no pa
 
 ## Shared-history acknowledgement
 
-A same-user person who has a neighbour (another person, or any `existingDaemons` entry) must list
+A same-user person who has a neighbour (another person who is not a separate install, or any `existingDaemons` entry) must list
 `"shared-provider-history"` in `acknowledge`, or validation fails. Reason: same-user people share the Linux user's
 provider session history and project directories. `add --acknowledge-shared-history` writes it. It also records it for
-existing same-user people who gain their first neighbour from this `add`, and says so. Unknown values are errors.
+existing same-user people who gain their first neighbour from this `add`, and says so. A separate person has their own Linux user and shares no history with anyone, so they are not a neighbour: `add <name> --separate` works next to a lone shared person without any acknowledgement. Unknown values are errors.
 
 ## Passwords
 

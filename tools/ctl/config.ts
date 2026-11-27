@@ -233,7 +233,8 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
         issues.push(`${p.name}: unknown acknowledge value "${a}" (known: ${ACKNOWLEDGEMENTS.join(", ")})`);
       }
     }
-    const hasNeighbour = c.people.length > 1 || c.existingDaemons.length > 0;
+    // A separate person has their own Linux user, so they share no provider history with anyone. Everyone else counts.
+    const hasNeighbour = c.people.some((o) => o !== p && o.install !== "separate") || c.existingDaemons.length > 0;
     if (p.isolation === DEFAULT_ISOLATION && hasNeighbour && !(p.acknowledge ?? []).includes("shared-provider-history")) {
       issues.push(
         `${p.name}: same-user people share the Linux user's provider session history and project directories with the other ` +
