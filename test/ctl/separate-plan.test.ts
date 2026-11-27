@@ -20,8 +20,6 @@ const sep = (extra: Record<string, unknown> = {}) => ({
 const config = (people: Record<string, unknown>[] = [sep()], extra: Record<string, unknown> = {}) =>
   parseConfig(rawCfg({ paseoVersion: VERSION, environmentPath: "%h/operator-secret-dir:/opt/operator-tools/bin", people, ...extra }));
 
-/** The one hand-run check that names the operator's home: `test ! -r <userHome>` run as a separate account. */
-const isHomeCheck = (s: Step) => s.command?.slice(-3).join(" ") === "! -r /home/tester";
 const unitOf = (p: Plan, name: string) => p.steps.find((s) => s.id === `${name}.unit`)?.file?.content ?? "";
 const idx = (p: Plan, id: string) => p.steps.findIndex((s) => s.id === id);
 const AS_ACCT = ["runuser", "-u", "acct-ann", "--", "env", "-i", "HOME=/home/acct-ann", "PATH=/usr/local/bin:/usr/bin:/bin"];
@@ -34,11 +32,10 @@ describe("separate install plan: nothing of the operator's leaks", () => {
     ["revoke plan", planRevoke(ctx, "ann")],
   ];
 
-  // The operator's home may appear only in the one hand-run verify step that proves the account cannot read it.
+  // Nothing of the operator's appears anywhere, verify steps included.
   it.each(parts)("%s contains no operator path, host paseoBinary or environmentPath", (_label, plan) => {
-    const text = JSON.stringify({ ...plan, verify: plan.verify.filter((s) => !isHomeCheck(s)) });
+    const text = JSON.stringify(plan);
     for (const bad of OPERATOR_PATHS) expect(text, bad).not.toContain(bad);
-    for (const s of plan.verify) expect(JSON.stringify(s), s.id).not.toMatch(/\/opt\/paseo|\/opt\/operator-tools|operator-secret-dir/);
   });
 
   it("the unit runs the account's own paseo, not the host binary", () => {
@@ -62,9 +59,9 @@ describe("separate install plan: install steps", () => {
     return s ? stepArgv(s) : undefined;
   };
 
-  it("creates the npm prefix inside the account home, owned by the account, parents first", () => {
-    expect(plan.steps.find((s) => s.id === "ann.local-dir")?.dir).toEqual({ path: "/home/acct-ann/.local", mode: "0700", owner: "acct-ann" });
-    expect(plan.steps.find((s) => s.id === "ann.npm-prefix")?.dir).toEqual({ path: "/home/acct-ann/.local/npm", mode: "0700", owner: "acct-ann" });
+  it("creates the npm prefix inside the account home as the account, parents first", () => {
+    expect(argvOf("ann.local-dir")).toEqual([...AS_ACCT, "mkdir", "-p", "-m", "0700", "/home/acct-ann/.local"]);
+    expect(argvOf("ann.npm-prefix")).toEqual([...AS_ACCT, "mkdir", "-p", "-m", "0700", "/home/acct-ann/.local/npm"]);
     expect(idx(plan, "ann.local-dir")).toBeLessThan(idx(plan, "ann.npm-prefix"));
   });
 
@@ -88,10 +85,12 @@ describe("separate install plan: install steps", () => {
     expect(idx(plan, "ann.install-claude")).toBeLessThan(idx(plan, "ann.install-codex"));
   });
 
-  it("installs before the unit and the daemon start, after the prefix exists", () => {
+  it("installs after every root write into the account home and before the daemon starts, after the prefix exists", () => {
     expect(idx(plan, "ann.npm-prefix")).toBeLessThan(idx(plan, "ann.install-paseo"));
     expect(idx(plan, "ann.install-paseo")).toBeLessThan(idx(plan, "ann.install-claude"));
-    expect(idx(plan, "ann.install-codex")).toBeLessThan(idx(plan, "ann.unit"));
+    expect(idx(plan, "ann.unit")).toBeLessThan(idx(plan, "ann.local-dir"));
+    expect(idx(plan, "ann.secret-env")).toBeLessThan(idx(plan, "ann.local-dir"));
+    expect(idx(plan, "ann.install-codex")).toBeLessThan(idx(plan, "ann.daemon-reload"));
     expect(idx(plan, "ann.install-codex")).toBeLessThan(idx(plan, "ann.enable"));
   });
 

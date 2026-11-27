@@ -63,8 +63,9 @@ const PersonSchema = z
   .strict();
 
 // One PATH entry: absolute directory, or %h (systemd's specifier for the user's home) followed by
-// an optional sub-path. No other specifier, no spaces, quotes or empty entries.
-const PATH_SEGMENT = "[A-Za-z0-9_.+@-]+";
+// an optional sub-path. No other specifier, no spaces, quotes or empty entries. A segment is never "." or "..", so a
+// %h entry cannot climb out of the home and an absolute entry cannot dodge the account-home overlap check.
+const PATH_SEGMENT = "(?!\\.{1,2}(?:[/:]|$))[A-Za-z0-9_.+@-]+";
 const PATH_ENTRY = `(?:%h(?:/${PATH_SEGMENT})*|(?:/${PATH_SEGMENT})+|/)`;
 const ENV_PATH = new RegExp(`^${PATH_ENTRY}(?::${PATH_ENTRY})*$`);
 
@@ -291,7 +292,7 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
       const others: (readonly [string, string])[] = [["userHome", c.userHome]];
       if (p.install === "separate") {
         others.push(["homeBase", homeBase], ["paseoBinary", c.paseoBinary]);
-        // %h entries are relative to the operator's home, which is already covered by userHome.
+        // %h entries are relative to the operator's home, which is already covered by userHome (no ".." segment is allowed).
         for (const entry of (c.environmentPath ?? "").split(":")) {
           if (entry.startsWith("/")) others.push(["environmentPath entry", entry]);
         }

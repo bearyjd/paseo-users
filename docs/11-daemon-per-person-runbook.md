@@ -120,8 +120,8 @@ Optional: `webUi` (default `false`; sets `PASEO_WEB_UI_ENABLED=true` so each dae
 **Set `environmentPath` for `same-user`.** A systemd user unit starts with a minimal `PATH`, so a daemon started from a
 generated unit may not find provider CLIs (claude, codex, git) and its agents would fail for a reason unrelated to
 logins. Copy the `Environment=PATH=...` value from your existing daemon's unit. Entries are absolute directories, or
-start with `%h` (systemd's specifier for the user's home); spaces, quotes, empty entries and any other `%` are
-rejected. It is ignored for `unix-account` units, because the operator's `PATH` does not belong in another user's
+start with `%h` (systemd's specifier for the user's home); spaces, quotes, empty entries, any other `%` and `.` or `..`
+segments (so `%h/../x` cannot leave the home) are rejected. It is ignored for `unix-account` units, because the operator's `PATH` does not belong in another user's
 environment.
 
 Rules, enforced at parse time (all errors listed together):

@@ -52,30 +52,31 @@ const stepText = (s: Step): string =>
     .join("\n");
 
 const personSteps = (plan: Plan, name: string) => plan.steps.filter((s) => s.id.startsWith(`${name}.`));
-/** The one hand-run check that must name the operator's home: `test ! -r <userHome>`. */
-const isHomeCheck = (s: Step) => s.command?.slice(-3).join(" ") === `! -r ${USER_HOME}`;
-const homeCheck = (plan: Plan, name: string) => plan.verify.find((s) => s.id.startsWith(`${name}.`) && isHomeCheck(s));
+/** The hand-run check that the account cannot read the operator's home. MANUAL, and it names no path. */
+const homeCheck = (plan: Plan, name: string) => plan.verify.find((s) => s.id === `${name}.verify-operator-home`);
 
 describe("separate install: the account cannot read the operator's home (hand-run verify)", () => {
   const plan = planHost(config());
 
-  it("adds a hand-run check as the account: test ! -r <userHome>", () => {
+  it("adds a MANUAL check for the account, with no command and no path", () => {
     const s = homeCheck(plan, "ann");
-    expect(s, "ann has a verify step running test ! -r <userHome>").toBeDefined();
-    expect(s?.kind).toBe("command");
-    expect(s?.privileged).toBe(true);
-    expect(s?.command).toEqual([...asAcct("acct-ann"), "test", "!", "-r", USER_HOME]);
+    expect(s, "ann has a verify-operator-home step").toBeDefined();
+    expect(s?.kind).toBe("manual");
+    expect(s?.command).toBeUndefined();
+    expect(s && stepArgv(s)).toBeUndefined();
     expect(s?.description).toContain("acct-ann");
+    expect(s?.description).toContain("UNVERIFIED");
+    expect(JSON.stringify(s)).not.toContain(USER_HOME);
   });
 
-  it("adds one check per separate person, each as its own account", () => {
-    expect(homeCheck(plan, "bob")?.command).toEqual([...asAcct("acct-bob"), "test", "!", "-r", USER_HOME]);
-    expect(plan.verify.filter(isHomeCheck)).toHaveLength(2);
+  it("adds one check per separate person, each naming its own account", () => {
+    expect(homeCheck(plan, "bob")?.description).toContain("acct-bob");
+    expect(plan.verify.filter((s) => s.id.endsWith(".verify-operator-home"))).toHaveLength(2);
   });
 
   it("is hand-run only: the check is in verify, never in the steps apply runs", () => {
+    expect(plan.steps.some((s) => s.id.endsWith(".verify-operator-home"))).toBe(false);
     expect(plan.steps.some((s) => s.command?.includes(USER_HOME))).toBe(false);
-    expect(plan.steps.some(isHomeCheck)).toBe(false);
   });
 
   it("is part of that person's own part of the plan", () => {
@@ -183,7 +184,6 @@ describe("separate install: the plan never contains the operator's paths (one te
 
   it("no step argv contains userHome, paseoBinary or environmentPath", () => {
     for (const s of every(plan, revoke, part)) {
-      if (isHomeCheck(s)) continue; // the one hand-run check that must name userHome
       const argv = (stepArgv(s) ?? []).join("\n");
       expect(argv, s.id).not.toContain(USER_HOME);
       expect(argv, s.id).not.toContain(HOST_BINARY);
@@ -245,10 +245,13 @@ describe("separate install: account-level commands", () => {
   it("every account-level command starts with runuser -u <acct> -- env HOME=<acctHome> PATH=<system>", () => {
     for (const [name, acct] of [["ann", "acct-ann"], ["bob", "acct-bob"]] as const) {
       const found = accountLevel(plan, name);
-      // install-paseo, one install per provider, verify-install, the home check
-      expect(found.length, name).toBe(name === "ann" ? 5 : 4);
+      // six account-made directories, five symlink guards, install-paseo, one install per provider, verify-install,
+      // and the other separate account's unreadable check
+      expect(found.length, name).toBe(name === "ann" ? 16 : 15);
       for (const s of found) {
-        expect(startsWith(s.command, asAcct(acct)), s.id).toBe(true);
+        // "<name>.<other>.verify-unreadable" runs as the other account: it proves that account cannot read this one's home
+        const other = /^\w+\.(\w+)\.verify-unreadable$/.exec(s.id)?.[1];
+        expect(startsWith(s.command, asAcct(other ? `acct-${other}` : acct)), s.id).toBe(true);
         expect(s.privileged, s.id).toBe(true);
       }
     }

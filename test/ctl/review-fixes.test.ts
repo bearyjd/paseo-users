@@ -38,12 +38,11 @@ async function renderedFiles(dir: string): Promise<string[]> {
 describe("a separate person's part of a mixed plan carries no operator paths", () => {
   const whole = planHost(mixed());
   const annPlan = planForPerson(whole, "ann");
-  // The one hand-run check that names userHome on purpose: the account must not read it.
   const isHomeCheck = (s: Step) => s.id === "ann.verify-operator-home";
 
   it("has no same-user prerequisites and none of the neighbour's paths", () => {
     expect(annPlan.steps.filter((s) => s.id.startsWith("same-user."))).toEqual([]);
-    for (const s of [...annPlan.steps, ...annPlan.verify].filter((x) => !isHomeCheck(x))) {
+    for (const s of [...annPlan.steps, ...annPlan.verify]) {
       expect(stepText(s), s.id).not.toContain("/home/tester");
     }
   });

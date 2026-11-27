@@ -89,8 +89,11 @@ Verified by unit tests only (`test/ctl/review-fixes.test.ts`, `test/ctl/separate
   `env -i` drops every other variable of the apply process (npm tokens, API keys, `NPM_CONFIG_*`, `NODE_OPTIONS`,
   `LD_PRELOAD`), so they do not reach npm or its lifecycle scripts.
 - `plan <name>` and `apply <name>` for a separate person include only that person's own steps. The `same-user.*`
-  prerequisites and any check naming a same-user neighbour's `PASEO_HOME` under the operator's home are left out; the hand-run
-  `verify-operator-home` check covers that home. The only step that names `userHome` is that check.
+  prerequisites and any check naming a same-user neighbour's `PASEO_HOME` that is under `userHome`, under the host `paseoBinary`
+  or under an absolute `environmentPath` entry are left out. A separate person's plan names none of those values anywhere.
+  `verify-operator-home` is a MANUAL verify step: it says to confirm the account cannot read the operator's home and does not
+  name the path (the person looks it up as `userHome` in the config). Checks that name a visible neighbour or another account run
+  through the same scrubbed `runuser ... env -i` wrapper, not `sudo`.
 - `apply` compares each staged file with the plan before it runs any command, so an edit to a staged unit after render is
   refused (render again and review).
 - A separate account home may not equal, contain or sit inside `userHome`, `homeBase`, the host `paseoBinary` or an absolute
@@ -100,10 +103,16 @@ Verified by unit tests only (`test/ctl/review-fixes.test.ts`, `test/ctl/separate
   the account exists, so after a failed install step (registry timeout, EACCES) a second `apply <name>` stops at `useradd`.
   Run the remaining steps by hand from `apply.sh` (or remove the half-made account and start again). This is true for every
   unix-account person, not only separate installs. A resume option is not built.
-- **Symlinks in account-owned paths.** Root creates `.local`, `.local/npm`, `.config` and the other account directories with
-  `install -d -o <acct>`. The account's own agents can replace one of them with a symlink after the first apply, and a later
-  root apply would follow it (chown and chmod the target, or create a directory in it). Before re-applying, check that these
-  paths are real directories (`test ! -L`). Not mitigated in code; household-level trust only (`04-threat-model.md` T20).
+- **Symlinks in account-owned paths.** For a separate install the account creates its own directories (`paseo-home`,
+  `.config`, `.config/systemd`, the unit directory, `.local`, `.local/npm`) with `runuser ... mkdir -p -m 0700`, so root never
+  chowns or chmods a path the account controls. Root still writes two files into the account home (`secret-env`, `unit`), and
+  those are ordered before every account-run installer, so on a first apply no account code (npm lifecycle scripts included) has
+  run when root writes. Each is preceded by `guard-*` steps (`test ! -L` on `.config`, `.config/systemd`, the unit directory and
+  the two files). On a hand-run re-apply, after the account has been running, the guards refuse a symlink that was planted since.
+  Not closed: a guard cannot beat a race with a running account process, and root `install` is not symlink-safe, so this
+  stays a household-level trust assumption (`04-threat-model.md` T20). The account home itself is still created by root under
+  `unixAccountHomeBase`, which must be root-owned. A person without `install` keeps the old root-created `install -d -o`
+  directories and the same hazard. Modelled with a fake runner in `test/ctl/hardening.test.ts`; UNVERIFIED on a real host.
 
 ## 5. Migration: moving a person from shared to separate
 
