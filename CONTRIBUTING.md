@@ -30,5 +30,11 @@ resolved. Maintainers can still push directly in an emergency; avoid it.
 6. Anything touching authentication, authorization, sessions, credentials or the store format also updates
    `docs/04-threat-model.md` and the capability matrix when a threat or blocker moves.
 
+## Releases
+
+Releases, tags and the Paseo registry listing are described in `docs/14-releasing.md`. A release PR bumps the version in
+both `package.json` and `server/status.ts`, moves the changelog entries under a dated heading, and keeps `OVERVIEW.md`
+accurate about what the plugin enforces. Tag after the merge, not on the branch.
+
 Dependency updates arrive as Renovate PRs (weekly, grouped for dev dependencies). `@getpaseo/plugin` is bumped by hand
 together with the Paseo version in `paseo-plugin.json`.

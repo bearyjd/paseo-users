@@ -1,9 +1,17 @@
 {
   "name": "paseo-users",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Multi-user authentication and access management for Paseo (identity + authorization kernel, Paseo plugin, core-extension requirements).",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bearyjd/paseo-users.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bearyjd/paseo-users/issues"
+  },
+  "homepage": "https://github.com/bearyjd/paseo-users#readme",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -14,6 +22,7 @@
   "files": [
     "LICENSE",
     "NOTICE",
+    "OVERVIEW.md",
     "paseo-plugin.json",
     "index.server.ts",
     "server",

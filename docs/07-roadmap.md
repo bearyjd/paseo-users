@@ -71,4 +71,5 @@ authenticated logins and revocation; R3 last) for the community-facing plugin. S
 2. Any change to production authentication on the target host (switching to `users` mode, rotating passwords).
 3. Creating accounts, migrating state, or installing this plugin on the target host's running daemon.
 4. Path B: creating Unix accounts and systemd units; opening additional ports.
-5. Publishing the repository to GitHub (not done; the repo is local only).
+5. ~~Publishing the repository to GitHub.~~ **Done**: `bearyjd/paseo-users` is public (checked with `gh repo view`, 2026-11-27).
+6. Cutting the 0.1.0 release tag and submitting the plugin to the Paseo registry (`14-releasing.md`). Not done until you do it.
