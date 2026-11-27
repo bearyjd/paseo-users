@@ -10,6 +10,7 @@
   },
   "files": [
     "LICENSE",
+    "NOTICE",
     "paseo-plugin.json",
     "index.server.ts",
     "server",
