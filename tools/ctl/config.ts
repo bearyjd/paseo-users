@@ -53,6 +53,8 @@ export const ConfigSchema = z
     environmentPath: z.string().regex(ENV_PATH, "environmentPath must be absolute directories separated by ':' (or start with %h), with no spaces, quotes, other '%' or empty entries").optional(),
     /** Parent of unix-account homes. */
     unixAccountHomeBase: absPath("unixAccountHomeBase").default("/home"),
+    /** Serve the bundled web UI from each daemon (PASEO_WEB_UI_ENABLED). The page is public to whoever reaches the port; the API still needs the daemon password. */
+    webUi: z.boolean().default(false),
     allowAllInterfaces: z.boolean().default(false),
     allowDefaultPort: z.boolean().default(false),
     /** Informational: daemons that already run. Used only for port collision checks. Never managed. */
@@ -78,6 +80,7 @@ export interface ResolvedConfig {
   homeBase: string;
   environmentPath?: string;
   unixAccountHomeBase: string;
+  webUi: boolean;
   allowAllInterfaces: boolean;
   allowDefaultPort: boolean;
   existingDaemons: { name: string; port: number }[];
@@ -168,6 +171,7 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
     homeBase,
     ...(c.environmentPath ? { environmentPath: c.environmentPath } : {}),
     unixAccountHomeBase: c.unixAccountHomeBase,
+    webUi: c.webUi,
     allowAllInterfaces: c.allowAllInterfaces,
     allowDefaultPort: c.allowDefaultPort,
     existingDaemons: c.existingDaemons,

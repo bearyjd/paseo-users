@@ -15,6 +15,8 @@ on. The rendered plan was applied by hand, step by step, after reading `apply.sh
 - **A real agent turn worked:** a Claude agent (`claude-haiku-5-5`) created through the second daemon, in an empty temp
   directory, replied correctly using the same login as the existing daemon. So login sharing is proven for Claude.
   Codex and OpenCode turns were not run (they only reported `ready`). The test agent, workspace and project were removed.
+- With `webUi: true` the second daemon serves the web UI at `/` (200) while `/api/*` still returns 401 without the password. Without it `/` is a 404, which looks like a failure but is not.
+- Restarting only that service (`systemctl --user restart`) brought it back healthy with the same password. This is a service restart, not a reboot.
 - The existing daemon kept running, unchanged.
 - Cost: about 1 GB resident while starting (peak 1.7 GB), then roughly 270 MB for the daemon process.
 
@@ -103,7 +105,7 @@ A JSON file. Everything is input; nothing is defaulted from the machine.
 }
 ```
 
-Optional: `homeBase` (default `<userHome>/.paseo-people`), `unixAccountHomeBase` (default `/home`),
+Optional: `webUi` (default `false`; sets `PASEO_WEB_UI_ENABLED=true` so each daemon serves the bundled web UI at its own `/`, which the daemon does not do by default. The page is public to anyone who can reach the port; the API still needs the password), `homeBase` (default `<userHome>/.paseo-people`), `unixAccountHomeBase` (default `/home`),
 `allowAllInterfaces`, `allowDefaultPort`, `environmentPath`.
 
 **Set `environmentPath` for `same-user`.** A systemd user unit starts with a minimal `PATH`, so a daemon started from a

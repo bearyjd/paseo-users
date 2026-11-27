@@ -67,6 +67,7 @@ export const sameUser: IsolationStrategy = {
             listen: `${ctx.listenAddress}:${person.port}`,
             paseoBinary: ctx.paseoBinary,
             envFile: envFile(person, ctx),
+            ...(ctx.webUi ? { webUi: true } : {}),
             ...(ctx.environmentPath ? { environmentPath: ctx.environmentPath } : {}),
           }),
         },

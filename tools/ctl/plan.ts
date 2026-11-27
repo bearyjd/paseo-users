@@ -75,6 +75,11 @@ function warningsFor(people: Person[], ctx: ResolvedConfig): string[] {
   if (["0.0.0.0", "::", "[::]"].includes(ctx.listenAddress)) {
     w.push("daemons listen on every interface; make sure the network in front of them is trusted");
   }
+  if (ctx.webUi) {
+    w.push(
+      "webUi is on: each daemon serves the web UI page to anyone who can reach its port (the API still needs that daemon's password); keep the port on a trusted network",
+    );
+  }
   return w;
 }
 

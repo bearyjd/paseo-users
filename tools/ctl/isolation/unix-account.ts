@@ -99,6 +99,7 @@ export const unixAccount: IsolationStrategy = {
             paseoBinary: ctx.paseoBinary,
             envFile: envFile(person, ctx),
             optionalEnvFile: optionalEnvFile(person, ctx),
+            ...(ctx.webUi ? { webUi: true } : {}),
           }),
         },
       }),
