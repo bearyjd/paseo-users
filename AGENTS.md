@@ -29,6 +29,8 @@ PASEO_PROBE=1 PASEO_CORE_DIR=<fork worktree> npm run test:probes   # also the co
 - Do not hardcode host names, usernames, paths or addresses.
 - Do not add runtime dependencies without justification (current: Node built-ins + `zod`).
 
+Releasing and registry listing: `docs/14-releasing.md`.
+
 ## Layout and conventions
 
 See `docs/ARCHITECTURE.md`. Plugin code only in `server/`, `shared/`, `client/`, `index.*`. Kernel has no Paseo

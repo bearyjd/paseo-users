@@ -5,10 +5,15 @@
 Pre-release and **not a security boundary for a running Paseo daemon** (see README and `docs/04-threat-model.md`).
 Do not rely on it to separate mutually untrusting users.
 
+## Supported versions
+
+Only the latest release (0.1.x) is looked at. 0.1.0 is a pre-release that enforces nothing on stock Paseo.
+
 ## Reporting a vulnerability
 
-Please report privately: open a GitHub "Report a vulnerability" advisory on the repository once it is published, or
-contact the maintainer directly. Do not open public issues for exploitable findings. Include affected version, a
+Please report privately. GitHub private vulnerability reporting is **not enabled** on the repository yet, so contact the
+maintainer directly through the GitHub profile of the repository owner (`bearyjd`). Do not open public issues for
+exploitable findings, and do not put details in a public issue asking for a contact. Include affected version, a
 reproduction against a disposable instance with synthetic credentials, and impact. We aim to acknowledge within
 7 days.
 
