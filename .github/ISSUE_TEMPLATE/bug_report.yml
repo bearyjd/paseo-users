@@ -14,13 +14,19 @@ body:
     validations: { required: true }
   - type: textarea
     id: what
-    attributes: { label: What happened, description: What you expected and what you saw }
+    attributes:
+      label: "What happened"
+      description: "What you expected and what you saw"
     validations: { required: true }
   - type: textarea
     id: repro
-    attributes: { label: Steps to reproduce, description: Prefer a disposable daemon and synthetic credentials }
+    attributes:
+      label: "Steps to reproduce"
+      description: "Prefer a disposable daemon and synthetic credentials"
     validations: { required: true }
   - type: input
     id: versions
-    attributes: { label: Versions, description: "paseo-users commit, Paseo version, Node version, OS" }
+    attributes:
+      label: "Versions"
+      description: "paseo-users commit, Paseo version, Node version, OS"
     validations: { required: true }
