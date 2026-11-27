@@ -1,12 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
+import { passphraseProblem } from "./passphrase.js";
 import type { Plan } from "./plan.js";
 import { secretSourceRel, shellQuote, stepArgv } from "./shell.js";
 
 export interface RenderOptions {
   /** Person names whose password is regenerated, or "all". Plan.rotate is always honoured too. */
   rotate?: string[] | "all";
+  /** Chosen passphrases by person name. Written as that person's secret in place of a random one, and kept by later renders. */
+  passwords?: Record<string, string>;
   /** Injected for tests. Default: crypto.randomBytes. */
   randomBytes?: (n: number) => Buffer;
 }
@@ -31,7 +34,6 @@ async function writePrivate(path: string, content: string): Promise<void> {
   await chmod(path, 0o600);
 }
 
-const PASSWORD_FILE_RE = /^[A-Za-z0-9_-]{20,}$/;
 
 export function renderApplyScript(plan: Plan): string {
   const lines = [
@@ -110,15 +112,23 @@ export async function renderPlan(plan: Plan, outDirInput: string, opts: RenderOp
       const pwPath = inside(outDir, `secrets/${name}.password`);
       const rotate = plan.rotate.includes(name) || opts.rotate === "all" || (Array.isArray(opts.rotate) && opts.rotate.includes(name));
       let password: string | undefined;
-      if (!rotate) {
-        const existing = await readFile(pwPath, "utf8").catch(() => undefined);
-        if (existing !== undefined && PASSWORD_FILE_RE.test(existing.trim())) password = existing.trim();
-      }
-      if (password === undefined) {
-        password = rng(32).toString("base64url");
+      const chosen = opts.passwords?.[name];
+      if (chosen !== undefined) {
+        const problem = passphraseProblem(chosen, name);
+        if (problem) throw new Error(`${name}: ${problem}`);
+        password = chosen;
         generated.push(name);
       } else {
-        kept.push(name);
+        if (!rotate) {
+          const existing = await readFile(pwPath, "utf8").catch(() => undefined);
+          if (existing !== undefined && passphraseProblem(existing.trim()) === undefined) password = existing.trim();
+        }
+        if (password === undefined) {
+          password = rng(32).toString("base64url");
+          generated.push(name);
+        } else {
+          kept.push(name);
+        }
       }
       await writePrivate(pwPath, `${password}\n`);
       await writePrivate(inside(outDir, secretSourceRel(name)), `PASEO_PASSWORD=${password}\n`);

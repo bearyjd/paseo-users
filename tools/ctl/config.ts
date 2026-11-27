@@ -7,7 +7,8 @@ import type { IsolationRegistry } from "./isolation/index.js";
 export const DEFAULT_PASEO_PORT = 6767;
 
 const SAFE_PATH = /^\/[A-Za-z0-9._+@/-]*$/;
-const PERSON_NAME = /^[a-z][a-z0-9_-]{1,31}$/;
+const RESERVED_NAMES: ReadonlySet<string> = new Set(["same-user", "unix-account"]);
+export const PERSON_NAME = /^[a-z][a-z0-9_-]{1,31}$/;
 const UNIX_NAME = /^[a-z_][a-z0-9_-]{0,31}$/;
 // IPv4, hostname, or bracketed IPv6. No whitespace, no systemd specifiers.
 const LISTEN = /^(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9.-]+)$/;
@@ -23,12 +24,26 @@ const absPath = (what: string) =>
 
 const port = z.number().int().min(1024, "port must be >= 1024").max(65535);
 
+/** Trade-offs a person can be explicitly accepted for. Unknown values are an error. */
+export const ACKNOWLEDGEMENTS = ["shared-provider-history"] as const;
+export type Acknowledgement = (typeof ACKNOWLEDGEMENTS)[number];
+
 const PersonSchema = z
   .object({
-    name: z.string().regex(PERSON_NAME, "name must match ^[a-z][a-z0-9_-]{1,31}$"),
+    name: z
+      .string()
+      .regex(PERSON_NAME, "name must match ^[a-z][a-z0-9_-]{1,31}$")
+      // Step ids are `<name>.<step>`; these prefixes also name the shared prerequisite steps, so a person with one of
+      // these names would be pulled into every other person's per-person apply.
+      .refine((n) => !RESERVED_NAMES.has(n), "name is reserved"),
     isolation: z.string().default(DEFAULT_ISOLATION),
     port: port.optional(),
     unixAccount: z.string().regex(UNIX_NAME, "unixAccount must be a portable POSIX user name").optional(),
+    /**
+     * Trade-offs the operator has accepted for this person. A same-user person who has a neighbour (another daemon in
+     * `people`, or any `existingDaemons`) must list "shared-provider-history".
+     */
+    acknowledge: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -177,6 +192,22 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
     existingDaemons: c.existingDaemons,
     people,
   };
+
+  for (const p of c.people) {
+    for (const a of p.acknowledge ?? []) {
+      if (!(ACKNOWLEDGEMENTS as readonly string[]).includes(a)) {
+        issues.push(`${p.name}: unknown acknowledge value "${a}" (known: ${ACKNOWLEDGEMENTS.join(", ")})`);
+      }
+    }
+    const hasNeighbour = c.people.length > 1 || c.existingDaemons.length > 0;
+    if (p.isolation === DEFAULT_ISOLATION && hasNeighbour && !(p.acknowledge ?? []).includes("shared-provider-history")) {
+      issues.push(
+        `${p.name}: same-user people share the Linux user's provider session history and project directories with the other ` +
+          `daemons on this machine. Accept that trade-off by adding "acknowledge": ["shared-provider-history"] to ${p.name} ` +
+          `(or use: paseo-users add ${p.name} --shared --acknowledge-shared-history)`,
+      );
+    }
+  }
 
   const homes: string[] = [];
   for (const p of people) {

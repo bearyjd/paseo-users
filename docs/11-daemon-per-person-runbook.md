@@ -141,18 +141,23 @@ Rules, enforced at parse time (all errors listed together):
 
 ## Use
 
-Run the tests (verified): `npm test`. To run the CLI, build it separately from the plugin (the plugin build is unchanged):
+Run the tests (verified): `npm test`. The command is `paseo-users`; see [13-cli.md](13-cli.md) for the quick start
+(`npm run ctl:build && npm link`, then `init`, `add`, `plan`, `render`, `apply`), where its config and rendered files
+live, and how to adopt a config like the one above with `paseo-users init --from config.json`.
+
+The older form still works without linking (build first with `npm run ctl:build`; there is no `tsx` in this repo, and Node
+cannot run the `.ts` sources directly because they import `.js` paths):
 
 ```bash
-npm run ctl:build                       # writes dist/tools/ (the plugin output in dist/server, dist/shared is untouched)
 node dist/tools/ctl/bin.js plan   config.json
 node dist/tools/ctl/bin.js render config.json --out ./rendered
 node dist/tools/ctl/bin.js revoke-plan config.json bob
 ```
 
-There is no `tsx` in this repo, and Node cannot run the `.ts` sources directly because they import `.js` paths.
 Only `plan`, `render` (into an empty directory you name) and `revoke-plan` were exercised by hand in development, with
-synthetic config.
+synthetic config. The new commands are covered by tests with fakes; real-host behaviour is UNVERIFIED (see 13).
+
+Same-user people who have a neighbour must carry `"acknowledge": ["shared-provider-history"]` in the config; see 13.
 
 ## Recommended order
 
