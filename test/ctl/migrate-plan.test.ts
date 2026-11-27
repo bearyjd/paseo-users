@@ -34,7 +34,15 @@ const PASEO_BINARY = "/opt/paseo/bin/paseo";
 const ENV_PATH_VALUES = ["/opt/operator-tools/bin", "operator-secret-dir"];
 
 /** Steps that may name the old (shared) layout: they are the ones that stop, move and copy it. */
-const OLD_SIDE = ["ann.stop-shared", "ann.guard-old-daemon-stopped", "ann.move-paseo-home", "ann.carry-secret-env", "ann.migrate-note"];
+const PREFLIGHT_IDS = [
+  "ann.guard-old-unit-disabled",
+  "ann.guard-old-home-link",
+  "ann.guard-old-home-dir",
+  "ann.guard-old-env-link",
+  "ann.guard-old-env-file",
+  "ann.guard-old-hardlinks",
+];
+const OLD_SIDE = ["ann.stop-shared", "ann.guard-old-daemon-stopped", ...PREFLIGHT_IDS, "ann.move-paseo-home", "ann.carry-secret-env", "ann.migrate-note"];
 
 const target = (extra: Record<string, unknown> = {}) => ({
   name: "ann",
@@ -323,7 +331,9 @@ describe("planMigrate: the guard makes moving PASEO_HOME impossible while the ol
   it("every step that reads or moves the old layout, other than the stop and the guard, is privileged and after the guard", () => {
     const g = idx(plan, GUARD);
     const readers = plan.steps.filter((s) => !["ann.stop-shared", GUARD].includes(s.id) && touchesOld(s));
-    expect(readers.map((s) => s.id).sort()).toEqual(["ann.carry-secret-env", "ann.move-paseo-home"]);
+    expect(readers.map((s) => s.id).sort()).toEqual(
+      ["ann.carry-secret-env", "ann.move-paseo-home", "ann.guard-old-home-link", "ann.guard-old-home-dir", "ann.guard-old-env-link", "ann.guard-old-env-file", "ann.guard-old-hardlinks"].sort(),
+    );
     for (const s of readers) {
       expect(s.privileged, s.id).toBe(true);
       expect(idx(plan, s.id), s.id).toBeGreaterThan(g);
@@ -524,7 +534,7 @@ describe("planMigrate: no operator value leaks into the target side", () => {
       for (const bad of [PASEO_BINARY, ...ENV_PATH_VALUES]) expect(text, bad).not.toContain(bad);
     });
 
-    it("the old layout (userHome, homeBase, old PASEO_HOME, old env file) appears only in the stop, guard, move, copy and note steps", () => {
+    it("the old layout (userHome, homeBase, old PASEO_HOME, old env file) appears only in the stop, guards, move, copy and note steps", () => {
       const bad = [ctx.userHome, ctx.homeBase, ...oldValues];
       for (const s of plan.steps) {
         if (OLD_SIDE.includes(s.id)) continue;

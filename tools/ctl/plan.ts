@@ -1,4 +1,5 @@
-import type { Person, ResolvedConfig } from "./config.js";
+import { posix } from "node:path";
+import { ConfigError, type Person, type ResolvedConfig } from "./config.js";
 import { sharedLayout } from "./isolation/same-user.js";
 import { accountLayout } from "./isolation/unix-account.js";
 import { defaultRegistry } from "./isolation/registry.js";
@@ -195,6 +196,18 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
   const next = accountLayout(person, ctx);
   const root = (s: Omit<Step, "privileged">): Step => ({ ...s, privileged: true });
 
+  // Fail closed before any step exists: the source is moved and chowned as root, so it must be a directory of its own and
+  // never the operator's home (a homeBase that is the parent of userHome would make `ann`'s home be userHome itself).
+  const inside = (parent: string, child: string) => {
+    const rel = posix.relative(parent, child);
+    return rel === "" || (rel !== ".." && !rel.startsWith("../") && !posix.isAbsolute(rel));
+  };
+  for (const [label, path] of [["PASEO_HOME", old.home], ["env file", old.envFile]] as const) {
+    if (inside(path, ctx.userHome)) {
+      throw new ConfigError([`${n}: the old ${label} ${path} equals or contains userHome ${ctx.userHome}; migrate would move or take over your own home. Choose another homeBase`]);
+    }
+  }
+
   const stop: Step = {
     id: `${n}.stop-shared`,
     description: `Stop and disable the shared unit ${old.unit} in your own user manager, so the old daemon is down before its PASEO_HOME moves (UNVERIFIED on a real host)`,
@@ -211,6 +224,23 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
     kind: "command",
     command: ["test", "!", "-e", `${old.home}/paseo.pid`],
   });
+  // Preflight on the old layout. All root, all before the account exists, so a missing or planted source fails before the
+  // host changes (a half-made account cannot be resumed). Each is one argv, no shell. UNVERIFIED on a real host.
+  const wants = posix.join(ctx.userHome, ".config", "systemd", "user", "default.target.wants", old.unit);
+  const pre = (id: string, description: string, command: string[]): Step =>
+    root({ id: `${n}.guard-old-${id}`, description: `${description} (UNVERIFIED on a real host)`, kind: "command", command });
+  const preflight: Step[] = [
+    pre("unit-disabled", `Refuse to continue while ${old.unit} is still enabled (${wants} exists): a unit that is starting or waiting to restart has no ${old.home}/paseo.pid yet, and an enabled one would start a second daemon at the next login or boot. Run the unprivileged ${old.unit} stop first`, ["test", "!", "-L", wants]),
+    pre("home-link", `Refuse to continue if ${old.home} is a symbolic link (mv would move the link and leave the data behind)`, ["test", "!", "-L", old.home]),
+    pre("home-dir", `Refuse to continue unless ${old.home} exists as a directory, so a wrong homeBase or an already migrated person fails before the account is created`, ["test", "-d", old.home]),
+    pre("env-link", `Refuse to continue if ${old.envFile} is a symbolic link (root would follow it and copy the target to ${next.account})`, ["test", "!", "-L", old.envFile]),
+    pre("env-file", `Refuse to continue unless ${old.envFile} exists as a regular file, so the password copy cannot fail after the move`, ["test", "-f", old.envFile]),
+    pre(
+      "hardlinks",
+      `Refuse to continue if anything under ${old.home} other than a directory has more than one hard link: chown changes the inode, so a link to a file outside the home would hand that file to ${next.account}. find exits non-zero when the -exec + command fails; a race with a running process is not closed (the daemon is stopped by the guard above)`,
+      ["find", old.home, "!", "-type", "d", "-links", "+1", "-exec", "false", "{}", "+"],
+    ),
+  ];
   const move = root({
     id: `${n}.move-paseo-home`,
     description:
@@ -244,7 +274,7 @@ export function planMigrate(ctx: ResolvedConfig, name: string, registry: Isolati
   // The account and installs are the slice 2 steps, minus a fresh PASEO_HOME (mv would nest the old one inside it) and
   // minus a rendered password (the existing one is carried across instead).
   const fresh = strategy.plan(person, ctx).filter((s) => s.id !== `${n}.paseo-home` && s.id !== `${n}.secret-env`);
-  const steps: Step[] = [stop, guard];
+  const steps: Step[] = [stop, guard, ...preflight];
   for (const s of fresh) {
     steps.push(s);
     // The move needs the account home to exist, and both moves come before any account code runs.
