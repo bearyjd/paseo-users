@@ -1,7 +1,7 @@
 import type { Status } from "../shared/status.js";
 import { NO_CORE_ENFORCEMENT, type CoreEnforcement } from "./kernel/daemon-mapping.js";
 
-export const PLUGIN_VERSION = "0.0.0";
+export const PLUGIN_VERSION = "0.1.0";
 
 /**
  * Detection of a core extension does not exist yet, so enforcement is always reported as `none`.

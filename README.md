@@ -24,7 +24,8 @@ external identity provider required. Apache-2.0.
 
 1. **Daemon per person** (priority, no core changes): one Paseo daemon per person on the same host, either under your
    current Linux user (shared LLM logins, data separation only) or under separate Linux users (OS isolation). Plan and
-   render with `tools/ctl`; see `docs/11-daemon-per-person-runbook.md`. Never applied to a real host yet.
+   render with the `paseo-users` command (`docs/13-cli.md`, built from `tools/ctl`); see `docs/11-daemon-per-person-runbook.md`.
+   Never applied to a real host yet.
 2. **Single daemon, many users** (needs core changes): the identity kernel below plus the `feat/users-admission` core branch.
 
 ## What works now
@@ -37,13 +38,25 @@ external identity provider required. Apache-2.0.
 - Admin-managed allowances for profiles, sandboxes, providers, credential **references**, hosts.
 - Fail-closed mapping to Paseo daemon permissions; read-only Profiles context + deny-by-default request evaluator.
 - JSON store with atomic writes, 0600 files, migration with backup and rollback.
-- 90 unit tests; 21 probes: blockers on stock Paseo, plugin load, and 11 end-to-end checks on a daemon built from the core branch.
+- 221 unit tests; 21 probes (probe count last checked before 0.1.0, not re-run for it): blockers on stock Paseo, plugin load, and 11 end-to-end checks on a daemon built from the core branch.
 
 ## What does not work yet
 
 Everything that needs the daemon to cooperate: authenticating connections, per-user listings/events/terminals/files,
 live-socket revocation, login/admin UI, device pairing ↔ user. See `docs/05-core-extension-requirements.md`
 (proposal only; **no Paseo core code has been changed**) and `docs/07-roadmap.md` for the decision on how to proceed.
+
+## Install (disposable daemons only)
+
+Release 0.1.0 is a pre-release. It enforces nothing on stock Paseo (`docs/14-releasing.md`). Install it into a disposable
+daemon only, as described under Develop:
+
+```bash
+paseo plugin install github:bearyjd/paseo-users --ref v0.1.0
+```
+
+The `v0.1.0` tag exists once the release is merged and tagged. A Paseo plugin-registry listing is submitted separately
+and is not live until the registry approves it.
 
 ## Develop
 
