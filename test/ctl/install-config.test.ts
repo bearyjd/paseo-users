@@ -149,6 +149,48 @@ describe("separate install: rejected (fail closed)", () => {
   });
 });
 
+describe("paseoVersion prerelease identifiers (SemVer 2.0 section 9)", () => {
+  it.each(["1.2.3-01", "1.2.3-rc.01", "1.2.3-00", "1.2.3-0.00", "1.2.3-rc.1.007"])("rejects leading-zero numeric identifier in %j", (v) => {
+    fails(withSep({}, { paseoVersion: v }), /paseoVersion.*exact/i);
+  });
+
+  it.each(["1.2.3-rc.0", "1.2.3-rc01", "1.2.3-0", "1.2.3-0a", "1.2.3-01a", "1.2.3-alpha.10", "1.2.3--", "1.2.3-0.3.7"])("accepts %j", (v) => {
+    expect(parseConfig(withSep({}, { paseoVersion: v })).paseoVersion).toBe(v);
+  });
+});
+
+describe("account home must not overlap the operator's home", () => {
+  const acct = (extra: Record<string, unknown> = {}, top: Record<string, unknown> = {}) => withSep({ unixAccount: "tester", ...extra }, top);
+
+  it("rejects an account home equal to userHome", () => {
+    fails(acct(), /ann: account home \/home\/tester .*userHome/);
+  });
+
+  it("rejects an account home inside userHome", () => {
+    fails(acct({}, { unixAccountHomeBase: "/home/tester/people" }), /ann: account home .*userHome/);
+    fails(acct({ unixAccount: "acct-ann" }, { unixAccountHomeBase: "/home/tester/people" }), /ann: account home .*userHome/);
+  });
+
+  it("rejects userHome inside an account home", () => {
+    fails(rawCfg({ userHome: "/srv/acct-ann/op", unixAccountHomeBase: "/srv", paseoVersion: VERSION, people: [sep()] }), /ann: account home .*userHome/);
+  });
+
+  it("rejects an account home equal to or overlapping homeBase", () => {
+    fails(acct({ unixAccount: "acct-ann" }, { homeBase: "/home/acct-ann" }), /ann: account home .*homeBase/);
+    fails(acct({ unixAccount: "acct-ann" }, { homeBase: "/home/acct-ann/sub" }), /ann: account home .*homeBase/);
+    fails(rawCfg({ userHome: "/home/tester", homeBase: "/srv/x", unixAccountHomeBase: "/srv/x", paseoVersion: VERSION, people: [sep({ unixAccount: "y" })] }), /ann: account home .*homeBase/);
+  });
+
+  it("applies to unix-account people without install too", () => {
+    fails(rawCfg({ people: [{ name: "ann", isolation: "unix-account", unixAccount: "tester" }] }), /ann: account home .*userHome/);
+  });
+
+  it("accepts a disjoint account home, including a sibling with a shared name prefix", () => {
+    expect(() => parseConfig(withSep())).not.toThrow();
+    expect(() => parseConfig(withSep({ unixAccount: "tester2" }))).not.toThrow();
+  });
+});
+
 describe("shared install", () => {
   const shared = (extra: Record<string, unknown> = {}) => ({ name: "ann", install: "shared", acknowledge: ["shared-provider-history"], ...extra });
 

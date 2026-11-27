@@ -168,6 +168,35 @@ describe("add / remove", () => {
     expect(s.runner.calls).toEqual([]);
   });
 
+  it("remove drops paseoVersion when the last separate person goes, and keeps it while one remains", async () => {
+    const s = await sandbox();
+    const ack = ["shared-provider-history"];
+    const sepPerson = (name: string) => ({ name, isolation: "unix-account", unixAccount: `acct-${name}`, install: "separate", providers: ["claude"] });
+    const base = { userHome: "/home/tester", listenAddress: "127.0.0.1", basePort: 7100, paseoBinary: "/opt/paseo/bin/paseo", paseoVersion: "0.17.4" };
+    await writeJson(s.configFile, { ...base, people: [{ name: "ann", acknowledge: ack }, sepPerson("bob"), sepPerson("cy")] });
+    const first = await s.run(["remove", "bob"]);
+    expect(first.err).toBe("");
+    expect(first.code).toBe(0);
+    expect(JSON.parse(await readFile(s.configFile, "utf8")).paseoVersion).toBe("0.17.4");
+    const second = await s.run(["remove", "cy"]);
+    expect(second.err).toBe("");
+    expect(second.code).toBe(0);
+    const stored = JSON.parse(await readFile(s.configFile, "utf8"));
+    expect("paseoVersion" in stored).toBe(false);
+    expect(stored.people.map((p: { name: string }) => p.name)).toEqual(["ann"]);
+    expect((await s.run(["add", "dee", "--shared", "--acknowledge-shared-history"])).code).toBe(0);
+    expect(s.runner.calls).toEqual([]);
+  });
+
+  it("remove drops paseoVersion when the last person overall goes", async () => {
+    const s = await sandbox();
+    const base = { userHome: "/home/tester", listenAddress: "127.0.0.1", basePort: 7100, paseoBinary: "/opt/paseo/bin/paseo", paseoVersion: "0.17.4" };
+    await writeJson(s.configFile, { ...base, people: [{ name: "bob", isolation: "unix-account", unixAccount: "acct-bob", install: "separate", providers: ["claude"] }] });
+    expect((await s.run(["remove", "bob"])).code).toBe(0);
+    expect("paseoVersion" in JSON.parse(await readFile(s.configFile, "utf8"))).toBe(false);
+    expect((await s.run(["add", "ann", "--shared"])).code).toBe(0);
+  });
+
   it("refuses a second shared person without the acknowledgement, and writes nothing", async () => {
     const s = await sandbox();
     await s.run(["init", "--listen", "127.0.0.1"]);

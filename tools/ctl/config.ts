@@ -23,8 +23,12 @@ const absPath = (what: string) =>
       `${what} must be a normalized absolute path using only [A-Za-z0-9._+@/-], not "/"`,
     );
 
-/** Exact version: x.y.z with an optional -prerelease suffix. No ranges, tags, build metadata or whitespace. */
-const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
+/**
+ * Exact version: x.y.z with an optional -prerelease suffix. No ranges, tags, build metadata or whitespace.
+ * Prerelease identifiers follow SemVer 2.0 section 9: a numeric identifier has no leading zero.
+ */
+const PRERELEASE_ID = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
+const EXACT_VERSION = new RegExp(`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-${PRERELEASE_ID}(\\.${PRERELEASE_ID})*)?$`);
 
 const port = z.number().int().min(1024, "port must be >= 1024").max(65535);
 
@@ -278,6 +282,16 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
     const home = strategy.paseoHome(p, ctx);
     homes.push(home);
     if (isInside(defaultHome, home)) issues.push(`${p.name}: PASEO_HOME ${home} is the default ~/.paseo or inside it`);
+    if (p.isolation === "unix-account" && p.unixAccount) {
+      // The account home is chowned and (for separate installs) gets its own npm prefix. It must not be, contain or sit
+      // inside the operator's home or the same-user homeBase.
+      const accountHome = posix.join(c.unixAccountHomeBase, p.unixAccount);
+      for (const [label, other] of [["userHome", c.userHome], ["homeBase", homeBase]] as const) {
+        if (isInside(accountHome, other) || isInside(other, accountHome)) {
+          issues.push(`${p.name}: account home ${accountHome} equals, contains or is inside ${label} ${other}; choose another unixAccount or unixAccountHomeBase`);
+        }
+      }
+    }
   }
   for (const h of dupes(homes)) issues.push(`duplicate PASEO_HOME: ${h}`);
 

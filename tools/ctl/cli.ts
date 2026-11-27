@@ -325,7 +325,10 @@ async function cmdRemove(args: string[], io: CliIo): Promise<number> {
   if (!people.some((x) => x.name === name)) {
     throw new UsageError(`unknown person "${name}" (known: ${people.map((x) => x.name).join(", ") || "none"})`);
   }
-  const next: RawConfig = { ...raw, people: people.filter((x) => x.name !== name) };
+  const remaining = people.filter((x) => x.name !== name);
+  const { paseoVersion: _version, ...rest } = raw;
+  // paseoVersion is only valid while someone is separate; drop it with the last separate person so remove stays possible.
+  const next: RawConfig = remaining.some((x) => x.install === "separate") ? { ...raw, people: remaining } : { ...rest, people: remaining };
   if (next.people.length > 0) parseConfig(next);
   await writeRawConfig(store.file, next, store.ownDir);
   io.stdout(`Removed ${name} from the config. The host is NOT changed: their daemon, files and password still exist.\n`);
