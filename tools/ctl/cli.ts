@@ -39,7 +39,10 @@ Setup and people (these change only the stored config, never the host):
   init [--from <config.json>] [--listen <addr>] [--port <n>] [--existing <name>:<port>]...
        [--paseo-binary <abs>] [--path <PATH>] [--web-ui] [--force]
   add <name> --shared [--port <n>] [--acknowledge-shared-history]
-  add <name> --separate        not implemented yet, see docs/12-separate-installs-plan.md
+  add <name> --separate --unix-account <acct> --providers <id,id,...> [--paseo-version <x.y.z>] [--port <n>]
+       own computer account and own installs. --paseo-version is exact (no range, no "latest"); it is stored once
+       for every separate person and may be left out after the first. Providers: claude, codex, opencode.
+       The person logs in to each provider by hand: the plan cannot do it. UNVERIFIED on a real host.
   remove <name>
   list [--json]                people, mode, port and whether the daemon is running (read-only)
 
@@ -154,7 +157,8 @@ async function loadStored(store: Store): Promise<ResolvedConfig> {
 function summary(plan: Plan): string {
   const out: string[] = ["People:"];
   for (const p of plan.people) {
-    out.push(`  ${p.name}  ${p.isolation}  port ${p.port}  PASEO_HOME ${p.paseoHome}${p.unixAccount ? `  account ${p.unixAccount}` : ""}`);
+    const install = p.install === "separate" ? `  install separate (${(p.providers ?? []).join(", ")})` : "";
+    out.push(`  ${p.name}  ${p.isolation}${install}  port ${p.port}  PASEO_HOME ${p.paseoHome}${p.unixAccount ? `  account ${p.unixAccount}` : ""}`);
   }
   if (plan.warnings.length) out.push("", "Warnings:", ...plan.warnings.map((w) => `  ! ${w}`));
   out.push("", "Steps (in order):");
@@ -278,22 +282,34 @@ async function cmdInit(args: string[], io: CliIo): Promise<number> {
   return 0;
 }
 
+const SEPARATE_ONLY_FLAGS = ["--unix-account", "--providers", "--paseo-version"];
+
 async function cmdAdd(args: string[], io: CliIo): Promise<number> {
-  const p = parseFlags(args, ["--port", "--config"], ["--shared", "--separate", "--acknowledge-shared-history"]);
+  const p = parseFlags(args, ["--port", "--config", ...SEPARATE_ONLY_FLAGS], ["--shared", "--separate", "--acknowledge-shared-history"]);
   const name = p.positional[0];
-  if (!name || p.positional.length > 1) throw new UsageError("usage: add <name> --shared [--port <n>] [--acknowledge-shared-history]");
-  if (p.bools.has("--separate")) {
-    io.stderr("--separate is not implemented yet, see docs/12-separate-installs-plan.md\n");
-    return 2;
+  const usage = "usage: add <name> --shared [--port <n>] [--acknowledge-shared-history]\n   or: add <name> --separate --unix-account <acct> --providers <id,id,...> [--paseo-version <x.y.z>] [--port <n>]";
+  if (!name || p.positional.length > 1) throw new UsageError(usage);
+  const shared = p.bools.has("--shared");
+  const separate = p.bools.has("--separate");
+  if (shared && separate) throw new UsageError("--shared and --separate exclude each other: choose one");
+  if (!shared && !separate) {
+    throw new UsageError("choose how this person runs: --shared (same Linux user) or --separate (own account and own installs)");
   }
-  if (!p.bools.has("--shared")) throw new UsageError("choose how this person runs: --shared (same Linux user). --separate is not implemented yet.");
+  if (!separate) {
+    // Fail closed: a flag that only means something for a separate person is refused, never silently ignored.
+    for (const f of SEPARATE_ONLY_FLAGS) if (p.values.has(f)) throw new UsageError(`${f} is only valid with --separate`);
+  } else if (p.bools.has("--acknowledge-shared-history")) {
+    throw new UsageError("--acknowledge-shared-history is only valid with --shared");
+  }
   const store = storeFor(io, p);
   const raw = await readRawConfig(store.file);
   const portText = p.value("--port");
   const port = portText === undefined ? undefined : Number(portText);
   if (port !== undefined && !Number.isInteger(port)) throw new UsageError("--port must be a whole number");
-  const ack = p.bools.has("--acknowledge-shared-history");
 
+  if (separate) return addSeparate(p, name, port, store, raw, io);
+
+  const ack = p.bools.has("--acknowledge-shared-history");
   let people = [...(raw.people ?? [])];
   const widened: string[] = [];
   if (ack) {
@@ -311,6 +327,44 @@ async function cmdAdd(args: string[], io: CliIo): Promise<number> {
   const added = resolved.people.find((x) => x.name === name);
   io.stdout(`Added ${name} (shared, same Linux user) on port ${added?.port}. The host was not changed.\n`);
   if (widened.length) io.stdout(`Also recorded the shared-history acknowledgement for: ${widened.join(", ")}\n`);
+  io.stdout(`Next: paseo-users plan ${name}   then   paseo-users render   then read apply.sh and run: paseo-users apply ${name} --yes --i-understand-this-changes-the-host\n`);
+  return 0;
+}
+
+/**
+ * `add <name> --separate`: own unix account, own installs. Every value is explicit (no default account, no default
+ * version). The result is validated by parseConfig before anything is written. UNVERIFIED on a real host.
+ */
+async function addSeparate(p: Parsed, name: string, port: number | undefined, store: Store, raw: RawConfig, io: CliIo): Promise<number> {
+  const unixAccount = p.value("--unix-account");
+  if (unixAccount === undefined) throw new UsageError("--separate needs --unix-account <acct>: there is no default account name");
+  const providersText = p.value("--providers");
+  if (providersText === undefined) throw new UsageError("--separate needs --providers <id,id,...> (known: claude, codex, opencode)");
+  // Split on "," only: no trimming and no case folding, so what is stored is what was typed. Validation names bad entries.
+  const providers = providersText.split(",");
+  if (providers.some((x) => x === "")) {
+    throw new UsageError(`--providers needs a comma-separated list of provider ids without empty entries, got "${providersText}"`);
+  }
+
+  const stored = raw.paseoVersion;
+  const given = p.value("--paseo-version");
+  if (stored !== undefined && given !== undefined && given !== stored) {
+    throw new UsageError(`--paseo-version ${given} differs from the stored paseoVersion ${stored}: every separate person uses one pinned version`);
+  }
+  const paseoVersion = given ?? stored;
+  if (paseoVersion === undefined) {
+    throw new UsageError("--separate needs --paseo-version <x.y.z> (exact, no range or tag): none is stored yet");
+  }
+
+  const person = { name, isolation: "unix-account", unixAccount, install: "separate" as const, providers, ...(port !== undefined ? { port } : {}) };
+  const next: RawConfig = { ...raw, paseoVersion, people: [...(raw.people ?? []), person] };
+  const resolved = parseConfig(next); // refuses (ConfigError) before anything is written: exact version, known providers, account rules
+  await writeRawConfig(store.file, next, store.ownDir);
+  const added = resolved.people.find((x) => x.name === name);
+  io.stdout(
+    `Added ${name} (separate: own computer account, own installs of paseo ${paseoVersion} and ${providers.join(", ")}) on port ${added?.port}. The host was not changed.\n`,
+  );
+  io.stdout(`${name} must log in to each provider (${providers.join(", ")}) by hand, in a shell as their own account. The plan cannot do it and copies no login. UNVERIFIED on a real host.\n`);
   io.stdout(`Next: paseo-users plan ${name}   then   paseo-users render   then read apply.sh and run: paseo-users apply ${name} --yes --i-understand-this-changes-the-host\n`);
   return 0;
 }
@@ -357,7 +411,7 @@ async function cmdList(args: string[], io: CliIo): Promise<number> {
           state = "unknown";
         }
       }
-      rows.push({ name: person.name, isolation: person.isolation, mode: person.isolation === "same-user" ? "shared" : person.isolation, port: person.port, state });
+      rows.push({ name: person.name, isolation: person.isolation, mode: person.install === "separate" ? "separate" : person.isolation === "same-user" ? "shared" : person.isolation, port: person.port, state });
     }
   }
   if (p.bools.has("--json")) {

@@ -44,9 +44,9 @@ below applies: add `"acknowledge": ["shared-provider-history"]` to each same-use
 | --- | --- | --- |
 | `init [--from f] [--listen a] [--port n] [--existing name:port]... [--paseo-binary p] [--path P] [--web-ui] [--force]` | Create the config. Refuses to overwrite without `--force`. | No |
 | `add <name> --shared [--port n] [--acknowledge-shared-history]` | Add a same-user person. | No |
-| `add <name> --separate` | Not implemented yet, see [12](12-separate-installs-plan.md). Exit 2. | No |
+| `add <name> --separate --unix-account <acct> --providers <id,id> [--paseo-version x.y.z] [--port n]` | Add a person with their own computer account and own installs ([12](12-separate-installs-plan.md)). Nothing defaults: account, providers and an exact version are required (the version may be left out once one is stored; a different one is refused). The result is validated before anything is written; a refusal exits 2 and leaves the config as it was. Providers: `claude`, `codex`, `opencode`. The person logs in to each provider by hand. **UNVERIFIED on a real host.** | No |
 | `remove <name>` | Remove from the config only. Run `revoke` first if they were ever applied. | No |
-| `list [--json]` | People, mode, port and `systemctl --user is-active paseo-<name>.service`. Anything it cannot tell is `unknown`. | No (read-only) |
+| `list [--json]` | People, mode (`shared`, `separate`, or `unix-account` for a host-binary account), port and `systemctl --user is-active paseo-<name>.service`. Anything it cannot tell is `unknown`. | No (read-only) |
 | `plan [name] [--json]` | Show the plan. With a name: that person's steps plus the `same-user.` prerequisites, still validated against everyone. | No |
 | `render [--out d] [--rotate name\|all]` | Write the plan, `apply.sh`, units, secrets and `notice-<name>.md`. | No |
 | `revoke-plan <name> [--out d] [--json]` | Show (and optionally render) the revoke plan. | No |
@@ -59,7 +59,7 @@ below applies: add `"acknowledge": ["shared-provider-history"]` to each same-use
 
 The older form still works exactly as before: `plan|render|revoke-plan|apply <config.json> ...` (the first argument is a
 file name; a person name never contains `.` or `/`, so the two cannot be confused). `render <config.json>` now also
-writes the notice pages.
+writes the notice pages. A separate person's page says: own computer account, own installs, own provider logins for the listed providers, own history. It names no host, path, address, port, account or version.
 
 ## Where files live
 
@@ -106,7 +106,7 @@ The passphrase sits in plaintext in a 0600 file, like generated passwords (see t
 | --- | --- |
 | 0 | Success |
 | 1 | Runtime failure: a step failed during `apply`, or a file-system or process error |
-| 2 | Usage error, invalid config, or a refusal (missing flags, stale plan, `--separate`) |
+| 2 | Usage error, invalid config, or a refusal (missing flags, stale plan, an invalid `--separate`) |
 
 ## Unverified
 

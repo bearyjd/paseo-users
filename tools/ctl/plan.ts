@@ -10,6 +10,8 @@ export interface PlanPerson {
   unixAccount?: string;
   /** Set only for a separate install, so the plan of a person without install is unchanged. */
   install?: "separate";
+  /** Provider ids installed for a separate person, in config order. Present only together with `install`. */
+  providers?: string[];
 }
 
 export interface Plan {
@@ -46,7 +48,7 @@ function describe(p: Person, ctx: ResolvedConfig, registry: IsolationRegistry): 
     port: p.port,
     paseoHome: registry.get(p.isolation).paseoHome(p, ctx),
     ...(p.unixAccount ? { unixAccount: p.unixAccount } : {}),
-    ...(p.install === "separate" ? { install: "separate" as const } : {}),
+    ...(p.install === "separate" ? { install: "separate" as const, providers: [...p.providers] } : {}),
   };
 }
 

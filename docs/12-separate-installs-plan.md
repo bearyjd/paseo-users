@@ -2,8 +2,9 @@
 
 Status: config validation, the provider catalog and the planner for separate installs are implemented and covered by unit
 tests (`test/ctl/install-config.test.ts`, `test/ctl/providers.test.ts`, `test/ctl/separate-plan.test.ts`). Nothing has been
-applied on a real host: the npm installs, the `runuser` step shape and the provider logins are **UNVERIFIED**. Migration (§5)
-and `notice-<name>.md` are not implemented.
+applied on a real host: the npm installs, the `runuser` step shape and the provider logins are **UNVERIFIED**. The CLI surface
+(`add --separate`, `list`/`plan` mode, `plan.json` carrying `install` and `providers`, and the separate `notice-<name>.md`) is
+implemented and covered by `test/ctl/separate-cli.test.ts`. Migration (§5) is not implemented.
 
 Goal: let each person be provisioned in one of two ways, from the same config and tool:
 

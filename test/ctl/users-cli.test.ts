@@ -217,15 +217,17 @@ describe("add / remove", () => {
     expect((await s.run(["add", "ann", "--shared", "--acknowledge-shared-history"])).code).toBe(0);
   });
 
-  it("--separate says not implemented and exits 2 without touching the config", async () => {
+  it("--separate alone is refused for the missing account and providers (no longer a placeholder), and a bare add is refused", async () => {
     const s = await sandbox();
     await s.run(["init", "--listen", "127.0.0.1"]);
     const before = await readFile(s.configFile, "utf8");
     const r = await s.run(["add", "ann", "--separate"]);
     expect(r.code).toBe(2);
-    expect(r.err).toContain("not implemented yet, see docs/12-separate-installs-plan.md");
+    expect(r.err).toContain("--unix-account");
+    expect(r.err).not.toContain("not implemented");
     expect(await readFile(s.configFile, "utf8")).toBe(before);
     expect((await s.run(["add", "ann"])).code).toBe(2);
+    expect(await readFile(s.configFile, "utf8")).toBe(before);
   });
 
   it("rejects bad names, duplicates, unknown people and a missing config", async () => {
