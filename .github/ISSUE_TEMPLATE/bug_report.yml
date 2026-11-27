@@ -1,0 +1,26 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Not for security problems: use the private advisory link on the issue chooser. Never paste passwords, tokens, pairing links or real host names.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [identity kernel, admission provider, daemon-per-person planner (tools/ctl), plugin, docs, CI]
+    validations: { required: true }
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: What you expected and what you saw }
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes: { label: Steps to reproduce, description: Prefer a disposable daemon and synthetic credentials }
+    validations: { required: true }
+  - type: input
+    id: versions
+    attributes: { label: Versions, description: "paseo-users commit, Paseo version, Node version, OS" }
+    validations: { required: true }

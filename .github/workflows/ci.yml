@@ -3,19 +3,30 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
+  # The job id `check` is the required status check on main. Do not rename it without updating branch protection.
   check:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # The daemon loads the compiled provider and the planner CLI is built the same way: both must compile.
+      - run: npm run build
+      - run: npm run ctl:build
       # Daemon probes are skipped without PASEO_PROBE=1; the static SDK check still runs.
       - run: npm run test:probes

@@ -15,3 +15,20 @@
    credentials). Never target a production daemon.
 8. Do not weaken a security requirement to make a feature fit; document the blocker instead.
 9. Licensed Apache-2.0; by contributing you agree your contribution is under the same terms.
+
+## Pull requests
+
+`main` is protected: changes land through a pull request, squash-merged, with the `check` job green and conversations
+resolved. Maintainers can still push directly in an emergency; avoid it.
+
+1. Branch from `main` (`feat/…`, `fix/…`, `docs/…`, `chore/…`) and keep the PR to one logical change.
+2. Run `npm run check` before pushing. The PR template asks what you verified and what you did not; answer honestly.
+3. CI runs on every PR: typecheck, unit tests, the provider and planner builds, and the static SDK probe (`ci`); static
+   analysis (`codeql`); and a vulnerable-dependency check (`dependency-review`). Only `check` is required to merge.
+4. Probes that start a daemon are opt-in and never run in CI. Run them locally against a **disposable** daemon.
+5. The squash commit message is the PR title plus body: write the title as a conventional commit (`feat:`, `fix:`, …).
+6. Anything touching authentication, authorization, sessions, credentials or the store format also updates
+   `docs/04-threat-model.md` and the capability matrix when a threat or blocker moves.
+
+Dependency updates arrive as Renovate PRs (weekly, grouped for dev dependencies). `@getpaseo/plugin` is bumped by hand
+together with the Paseo version in `paseo-plugin.json`.

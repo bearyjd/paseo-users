@@ -5,6 +5,8 @@ All notable changes. Format follows Keep a Changelog; versions follow SemVer onc
 ## [Unreleased]
 
 ### Added
+- Repository set up for pull requests: PR and issue templates, CODEOWNERS, a Renovate config, CI hardened (pinned action
+  SHAs, concurrency, timeouts, provider and planner builds), CodeQL and dependency review workflows.
 - `tools/ctl`: provisioning planner for the daemon-per-person mode with pluggable isolation strategies
   (`same-user`, `unix-account`). Plans and renders only; `apply` needs two explicit flags and uses an injected runner.
   Runbook `docs/11-daemon-per-person-runbook.md`. 64 tests.

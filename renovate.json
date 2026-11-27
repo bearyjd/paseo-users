@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 3,
+  "lockFileMaintenance": { "enabled": true, "schedule": ["before 6am on the first day of the month"] },
+  "packageRules": [
+    {
+      "description": "Tracks the Paseo version this package targets (also paseo-plugin.json requirements). Bump by hand together.",
+      "matchPackageNames": ["@getpaseo/plugin"],
+      "enabled": false
+    },
+    {
+      "description": "Group routine dev-dependency updates into one PR.",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "dev dependencies"
+    }
+  ]
+}
