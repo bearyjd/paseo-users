@@ -5,6 +5,13 @@ All notable changes. Format follows Keep a Changelog; versions follow SemVer onc
 ## [Unreleased]
 
 ### Added
+- `paseo-users` command (`tools/ctl`, `bin` in `package.json`, `docs/13-cli.md`): keeps its own config under
+  `$XDG_CONFIG_HOME/paseo-users`, with `init` (or `init --from` to adopt a JSON config), `add --shared`, `remove`, `list`,
+  `plan [name]`, `render` (default dir under `$XDG_STATE_HOME`, plus a `notice-<name>.md` per person), `revoke`,
+  `password [--stdin]` and per-person `apply`. The older `plan|render|revoke-plan|apply <config.json>` form is unchanged.
+  `--separate` is refused until `docs/12` is built. Real-host behaviour is unverified.
+- Config rule: a same-user person with a neighbour must list `acknowledge: ["shared-provider-history"]`.
+- `same-user` and `unix-account` are reserved person names (they would collide with shared step ids).
 - Repository set up for pull requests: PR and issue templates, CODEOWNERS, a Renovate config, CI hardened (pinned action
   SHAs, concurrency, timeouts, provider and planner builds), CodeQL and dependency review workflows.
 - `tools/ctl`: provisioning planner for the daemon-per-person mode with pluggable isolation strategies

@@ -125,3 +125,22 @@ export function planRevoke(ctx: ResolvedConfig, name: string, registry: Isolatio
     rotate: [person.name],
   };
 }
+
+/**
+ * Only one person's part of a plan: their own steps (ids starting `<name>.`) and the shared same-user prerequisites
+ * (ids starting `same-user.`). Warnings are kept whole, because they describe the whole setup. The plan must already be
+ * built from the whole config, so validation and port assignment still cover everyone.
+ */
+export function planForPerson(plan: Plan, name: string): Plan {
+  const person = plan.people.find((p) => p.name === name);
+  if (!person) throw new Error(`unknown person "${name}" (known: ${plan.people.map((p) => p.name).join(", ")})`);
+  return {
+    ...plan,
+    people: [person],
+    steps: plan.steps.filter((s) => stepBelongsTo(s.id, name)),
+    verify: plan.verify.filter((s) => s.id.startsWith(`${name}.`)),
+  };
+}
+
+export const stepBelongsTo = (stepId: string, name: string): boolean =>
+  stepId.startsWith(`${name}.`) || stepId.startsWith("same-user.");

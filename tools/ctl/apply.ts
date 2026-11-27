@@ -11,6 +11,8 @@ export interface CommandRunner {
 export interface ApplyOptions {
   /** Whether the current process is root. Root runs only privileged steps; a normal user runs only the others. */
   isRoot: boolean;
+  /** Run only steps whose id passes. The staleness check still covers the whole plan. Steps filtered out are not reported. */
+  only?: (stepId: string) => boolean;
 }
 
 export interface ApplyResult {
@@ -40,6 +42,7 @@ export async function applyPlan(plan: Plan, outDirInput: string, runner: Command
 
   const result: ApplyResult = { ok: true, executed: [], skipped: [], commands: [] };
   for (const step of plan.steps) {
+    if (opts.only && !opts.only(step.id)) continue;
     const argv = stepArgv(step);
     if (!argv) {
       result.skipped.push({ id: step.id, reason: "manual" });

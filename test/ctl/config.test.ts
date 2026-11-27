@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError, parseConfig } from "../../tools/ctl/config.js";
 import { createRegistry } from "../../tools/ctl/isolation/index.js";
-import { cfg } from "./helpers.js";
+import { cfg, rawCfg } from "./helpers.js";
 
 const fails = (raw: unknown, re: RegExp) => {
   try {
@@ -47,7 +47,7 @@ describe("config validation", () => {
   it("refuses 6767 unless allowDefaultPort, and never assigns it automatically", () => {
     fails(cfg({ people: [{ name: "ann", port: 6767 }] }), /6767.*allowDefaultPort/);
     expect(parseConfig(cfg({ allowDefaultPort: true, people: [{ name: "ann", port: 6767 }] })).people[0]?.port).toBe(6767);
-    const c = parseConfig({ ...cfg(), basePort: 6766, people: [{ name: "ann" }, { name: "bob" }] });
+    const c = parseConfig(cfg({ basePort: 6766 }));
     expect(c.people.map((p) => p.port)).toEqual([6766, 6768]);
   });
 
@@ -96,5 +96,43 @@ describe("config validation", () => {
   it("rejects an unknown isolation id (registry fails closed)", () => {
     fails(cfg({ people: [{ name: "ann", isolation: "podman" }] }), /unknown isolation "podman"/);
     expect(() => createRegistry([]).get("x")).toThrow(/unknown isolation strategy/);
+  });
+});
+
+describe("shared-history acknowledgement", () => {
+  const ack = ["shared-provider-history"];
+  const trade = /same-user people share the Linux user's provider session history and project directories/;
+
+  it("a lone same-user person needs no acknowledgement", () => {
+    expect(() => parseConfig(rawCfg({ people: [{ name: "ann" }] }))).not.toThrow();
+  });
+
+  it("two same-user people without it fail, naming the trade-off and how to acknowledge, for each person", () => {
+    fails(rawCfg(), trade);
+    fails(rawCfg(), /--acknowledge-shared-history/);
+    fails(rawCfg({ people: [{ name: "ann", acknowledge: ack }, { name: "bob" }] }), /bob: same-user/);
+    expect(() => parseConfig(rawCfg({ people: [{ name: "ann", acknowledge: ack }, { name: "bob", acknowledge: ack }] }))).not.toThrow();
+  });
+
+  it("a neighbour that is an existing daemon counts", () => {
+    fails(rawCfg({ existingDaemons: [{ name: "main", port: 7000 }], people: [{ name: "ann" }] }), trade);
+    expect(() => parseConfig(rawCfg({ existingDaemons: [{ name: "main", port: 7000 }], people: [{ name: "ann", acknowledge: ack }] }))).not.toThrow();
+  });
+
+  it("unix-account people do not need it", () => {
+    expect(() =>
+      parseConfig(rawCfg({ people: [{ name: "ann", isolation: "unix-account", unixAccount: "svc-a" }, { name: "bob", isolation: "unix-account", unixAccount: "svc-b" }] })),
+    ).not.toThrow();
+  });
+
+  it("an unknown acknowledge value is an error naming the known ones", () => {
+    fails(rawCfg({ people: [{ name: "ann", acknowledge: ["shared-provider-history", "whatever"] }] }), /unknown acknowledge value "whatever" \(known: shared-provider-history\)/);
+    fails(rawCfg({ people: [{ name: "ann", acknowledge: "shared-provider-history" }] }), /acknowledge/);
+  });
+});
+
+describe("reserved person names", () => {
+  it.each(["same-user", "unix-account"])("rejects %s: it would collide with shared step ids and misroute per-person apply", (name) => {
+    expect(() => parseConfig(cfg({ people: [{ name }] }))).toThrow(ConfigError);
   });
 });

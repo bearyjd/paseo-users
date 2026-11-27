@@ -12,11 +12,28 @@ export const BASE = {
   paseoBinary: "/opt/paseo/bin/paseo",
 } satisfies Partial<RawConfig>;
 
-export const cfg = (extra: Record<string, unknown> = {}) => ({
+/** Raw config as written, no acknowledgements added. Use this to test the acknowledgement rule. */
+export const rawCfg = (extra: Record<string, unknown> = {}) => ({
   ...BASE,
   people: [{ name: "ann" }, { name: "bob" }],
   ...extra,
 });
+
+/**
+ * Like rawCfg, but every same-user person without an `acknowledge` key gets the shared-history acknowledgement, so
+ * tests about other things need not repeat it.
+ */
+export const cfg = (extra: Record<string, unknown> = {}) => {
+  const raw = rawCfg(extra);
+  return {
+    ...raw,
+    people: (raw.people as Record<string, unknown>[]).map((p) =>
+      p.acknowledge === undefined && (p.isolation === undefined || p.isolation === "same-user")
+        ? { ...p, acknowledge: ["shared-provider-history"] }
+        : p,
+    ),
+  };
+};
 
 export const tmp = () => mkdtemp(join(tmpdir(), "ctl-"));
 
