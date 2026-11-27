@@ -17,11 +17,12 @@ on. The rendered plan was applied by hand, step by step, after reading `apply.sh
   Codex and OpenCode turns were not run (they only reported `ready`). The test agent, workspace and project were removed.
 - With `webUi: true` the second daemon serves the web UI at `/` (200) while `/api/*` still returns 401 without the password. Without it `/` is a 404, which looks like a failure but is not.
 - Restarting only that service (`systemctl --user restart`) brought it back healthy with the same password. This is a service restart, not a reboot.
+- **A person signed in from a phone.** Chrome on a phone, over the tailnet, loaded the second daemon's own web UI (`http://<address>:<port>/`) and the owner signed in with that daemon's password using "Direct connection". So a second daemon on its own port works for a real user on a real device. The browser treats the plain-`http` address as not secure; the tailnet itself is encrypted.
 - The existing daemon kept running, unchanged.
 - Cost: about 1 GB resident while starting (peak 1.7 GB), then roughly 270 MB for the daemon process.
 
 **Still not exercised:** agent turns for Codex and OpenCode (a `ready` status is not proof that logins work; only a
-turn is), the app adding the second daemon as a host, restart and boot persistence, `unix-account` mode,
+turn is), the native mobile/desktop app with two host entries (only the browser web UI was tried), restart and boot persistence, `unix-account` mode,
 and revocation. Treat each as unverified until done. Apply by hand, one person at a time, and check each step.
 
 ## What this is
@@ -209,7 +210,7 @@ None of these have been exercised on a real host. Check each before relying on i
 - **Linger**: `loginctl enable-linger` starting user managers at boot and keeping daemons alive after logout, and
   `systemctl --machine=<acct>@.host --user ...` reaching another account's manager.
 - **Stopping a unit ends agent processes** the daemon started (control-group kill); `loginctl terminate-user` for accounts.
-- The app adding several hosts on different ports of one address.
+- The native app holding several host entries on different ports of one address.
 
 Verified by probes on disposable daemons (`PASEO_PROBE=1 npm run test:probes`, installed Paseo 0.17.4, temp homes, loopback):
 two daemons started as `daemon run --home <dir>` with `PASEO_LISTEN`, `PASEO_PASSWORD` and `PASEO_RELAY_ENABLED=false`
