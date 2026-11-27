@@ -1,6 +1,6 @@
 # Architecture and repository structure
 
-Read in this order: `01` current Paseo auth → `02` capability matrix → `03` security architecture → `04` threat model →
+Read in this order (plan for shared + separate installs: `12-separate-installs-plan.md`): `01` current Paseo auth → `02` capability matrix → `03` security architecture → `04` threat model →
 `05` core-extension requirements → `06` data model → `07` roadmap/decision → `08` Profiles contract → `10` testing.
 
 ## Components
