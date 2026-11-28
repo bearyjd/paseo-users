@@ -1,14 +1,15 @@
 import { execFile, spawn } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readFile, realpath, rm, stat } from "node:fs/promises";
+import { basename, dirname, join, relative, isAbsolute, resolve } from "node:path";
 import { applyPlan, ApplyRefused, type CommandRunner } from "./apply.js";
 import { ConfigError, parseConfig, PERSON_NAME, type RawConfig, type ResolvedConfig } from "./config.js";
 import type { Detected, Detector } from "./detect.js";
+import { sharedLayout } from "./isolation/same-user.js";
 import { writeNotices } from "./notice.js";
 import { passphraseProblem } from "./passphrase.js";
-import { planForPerson, planHost, planRevoke, stepBelongsTo, type Plan } from "./plan.js";
+import { personStepFilter, planForPerson, planHost, planMigrate, planRevoke, type Plan } from "./plan.js";
 import { renderPlan, type RenderOptions, type RenderResult } from "./render.js";
-import { shellQuote, stepArgv } from "./shell.js";
+import { secretSourceRel, shellQuote, stepArgv } from "./shell.js";
 import { defaultConfigPath, ensurePrivateDir, readRawConfig, stateDir, UsageError, writeRawConfig, type HostEnv } from "./store.js";
 
 /** Read-only command runner that captures stdout. Used by `list` only. */
@@ -39,7 +40,10 @@ Setup and people (these change only the stored config, never the host):
   init [--from <config.json>] [--listen <addr>] [--port <n>] [--existing <name>:<port>]...
        [--paseo-binary <abs>] [--path <PATH>] [--web-ui] [--force]
   add <name> --shared [--port <n>] [--acknowledge-shared-history]
-  add <name> --separate        not implemented yet, see docs/12-separate-installs-plan.md
+  add <name> --separate --unix-account <acct> --providers <id,id,...> [--paseo-version <x.y.z>] [--port <n>]
+       own computer account and own installs. --paseo-version is exact (no range, no "latest"); it is stored once
+       for every separate person and may be left out after the first. Providers: claude, codex, opencode.
+       The person logs in to each provider by hand: the plan cannot do it. UNVERIFIED on a real host.
   remove <name>
   list [--json]                people, mode, port and whether the daemon is running (read-only)
 
@@ -49,6 +53,10 @@ Plan and render (the stored config is used; pass --config <file> to use another)
   revoke-plan <name> [--out <dir>] [--json]
   password <name> [--stdin] [--out <dir>]          rotate (random) or set (one line on stdin) a password in the rendered files
   revoke <name> [--out <dir>] [--apply --yes --i-understand-this-changes-the-host]
+  migrate <name> [--out <dir>] [--apply --yes --i-understand-this-changes-the-host]
+       move a person from the shared install to their own account (config: isolation unix-account, install separate,
+       same port). Keeps their Paseo data and password; provider logins start fresh. Default dir: .../migrate-<name>.
+       UNVERIFIED on a real host.
 
 Change the host:
   apply <name> --yes --i-understand-this-changes-the-host [--out <dir>]
@@ -96,7 +104,11 @@ interface Parsed {
   value(flag: string): string | undefined;
 }
 
-function parseFlags(args: string[], valueFlags: string[], boolFlags: string[]): Parsed {
+/**
+ * A value flag may appear once unless it is listed in `repeatable`: a second value is refused, never last-wins, so a
+ * bad earlier value cannot be hidden behind a good later one.
+ */
+function parseFlags(args: string[], valueFlags: string[], boolFlags: string[], repeatable: string[] = []): Parsed {
   const positional: string[] = [];
   const values = new Map<string, string[]>();
   const bools = new Set<string>();
@@ -105,6 +117,7 @@ function parseFlags(args: string[], valueFlags: string[], boolFlags: string[]): 
     if (valueFlags.includes(a)) {
       const v = args[++i];
       if (v === undefined) throw new UsageError(`${a} needs a value`);
+      if (values.has(a) && !repeatable.includes(a)) throw new UsageError(`${a} was given more than once: give it once`);
       values.set(a, [...(values.get(a) ?? []), v]);
     } else if (boolFlags.includes(a)) bools.add(a);
     else if (a.startsWith("--")) throw new UsageError(`unknown flag ${a}`);
@@ -154,7 +167,8 @@ async function loadStored(store: Store): Promise<ResolvedConfig> {
 function summary(plan: Plan): string {
   const out: string[] = ["People:"];
   for (const p of plan.people) {
-    out.push(`  ${p.name}  ${p.isolation}  port ${p.port}  PASEO_HOME ${p.paseoHome}${p.unixAccount ? `  account ${p.unixAccount}` : ""}`);
+    const install = p.install === "separate" ? `  install separate (${(p.providers ?? []).join(", ")})` : "";
+    out.push(`  ${p.name}  ${p.isolation}${install}  port ${p.port}  PASEO_HOME ${p.paseoHome}${p.unixAccount ? `  account ${p.unixAccount}` : ""}`);
   }
   if (plan.warnings.length) out.push("", "Warnings:", ...plan.warnings.map((w) => `  ! ${w}`));
   out.push("", "Steps (in order):");
@@ -192,9 +206,164 @@ async function outDirFor(io: CliIo, p: Parsed, leaf: string): Promise<string> {
   return out;
 }
 
+/** The path with symbolic links resolved as far as it exists; the rest (not created yet) is appended as written. */
+async function resolveExisting(path: string): Promise<string> {
+  const abs = resolve(path);
+  const rest: string[] = [];
+  for (let cur = abs; ; ) {
+    try {
+      return join(await realpath(cur), ...rest.reverse());
+    } catch {
+      const parent = dirname(cur);
+      if (parent === cur) return abs;
+      rest.push(basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/**
+ * Refuses an output directory that is, lies below, or contains any of `sources`. migrate moves the old PASEO_HOME while apply.sh and
+ * every non-account command still use the output directory as their working directory: one inside the source moves with it.
+ * Compared as written and with symbolic links resolved, so a link into the source does not get past it.
+ */
+async function refuseOutInside(out: string, sources: string[]): Promise<void> {
+  const isInside = (parent: string, child: string) => {
+    const rel = relative(parent, child);
+    return rel === "" || (rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel));
+  };
+  const outForms = [resolve(out), await resolveExisting(out)];
+  for (const source of sources) {
+    for (const src of new Set([resolve(source), await resolveExisting(source)])) {
+      if (outForms.some((o) => isInside(src, o))) {
+        throw new UsageError(`refusing: the output directory ${out} is, or lies inside, ${source}, which migrate moves. Use another --out (or XDG_STATE_HOME)`);
+      }
+      // The other way round: rendering into a reused directory deletes <out>/files, so a source below the output directory
+      // (homeBase under <out>/files, or --out a parent of homeBase) would be deleted before any apply phase runs.
+      if (outForms.some((o) => isInside(o, src))) {
+        throw new UsageError(`refusing: ${source}, which migrate moves, lies inside the output directory ${out}, and rendering there deletes ${out}/files. Use another --out (or XDG_STATE_HOME) that does not contain it`);
+      }
+    }
+  }
+}
+
+/** True when the store is the default config file, the only one the default render directory belongs to. */
+function isDefaultStore(io: CliIo, store: Store): boolean {
+  try {
+    return store.file === resolve(defaultConfigPath(io.env ?? {}));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Deletes the staged password and .env of person names from the default render directory, so a name that is removed
+ * and later given to someone else never inherits the previous person's password. Only the default directory is known:
+ * one rendered with --out is the operator's to clean. Only the default config owns that directory: editing another
+ * --config file must never delete the default config's secrets.
+ * "other-config": the edited config is not the default one, nothing was deleted. "unlocated": the state directory
+ * cannot be located, nothing was deleted.
+ */
+async function forgetStagedSecrets(io: CliIo, store: Store, names: string[]): Promise<"deleted" | "other-config" | "unlocated"> {
+  if (!isDefaultStore(io, store)) return "other-config";
+  let secrets: string;
+  try {
+    secrets = join(stateDir(io.env ?? {}), "render", "secrets");
+  } catch {
+    return "unlocated";
+  }
+  for (const name of names) {
+    if (!PERSON_NAME.test(name)) continue;
+    await rm(join(secrets, `${name}.password`), { force: true });
+    await rm(join(secrets, secretSourceRel(name).replace(/^secrets\//, "")), { force: true });
+  }
+  return "deleted";
+}
+
+/** What decides whether a staged password may carry over to a person of the same name: who they are on the host. */
+const personKind = (x: { isolation?: string | undefined; unixAccount?: string | undefined; install?: string | undefined }) =>
+  `${x.isolation ?? "same-user"}|${x.unixAccount ?? ""}|${x.install === "separate" ? "separate" : ""}`;
+
+/** Names in `before` that are gone from `after` or became a different kind of person (another account or mode). */
+function replacedNames(before: RawConfig, after: RawConfig): string[] {
+  const now = new Map((after.people ?? []).map((x) => [x.name, personKind(x)]));
+  return (before.people ?? []).filter((x) => now.get(x.name) !== personKind(x)).map((x) => x.name);
+}
+
+/** Resolved port of every person in a stored config, or undefined when it does not parse (nobody to keep in place). */
+function resolvedPorts(raw: RawConfig): Map<string, number> | undefined {
+  try {
+    return new Map(parseConfig(raw).people.map((x) => [x.name, x.port]));
+  } catch {
+    return undefined;
+  }
+}
+
 const APPLY_FLAGS = ["--yes", "--i-understand-this-changes-the-host"];
 const hasApplyFlags = (p: Parsed) => APPLY_FLAGS.every((f) => p.bools.has(f));
 const REFUSAL = "refusing: apply changes the host. Pass --yes and --i-understand-this-changes-the-host after reading apply.sh.\n";
+
+/**
+ * What state a failed apply leaves and what to do next. apply has no resume: a second run stops at the first step that
+ * cannot be repeated (useradd, or for a migration the old-home guard). A failed migration preflight (`.guard-old-*`) is the
+ * exception: it is read-only and runs before anything changes, so it says a re-run is safe and how to restart the stopped
+ * shared unit. The old-home guard is the one preflight that says the opposite: once an earlier run moved the data it fails
+ * too, and restarting the old unit would fork the person's data. A failure between the preflight and the move (useradd and
+ * the like) is not resumable but still names how to restart the stopped unit. It names the failed step, the steps after it,
+ * and, once a migration has moved the old PASEO_HOME, that the data is already in the new account.
+ */
+function failureState(plan: Plan, out: string, failedId: string | undefined, executed: string[], only?: (id: string) => boolean): string {
+  const failed = plan.steps.find((s) => s.id === failedId);
+  const at = plan.steps.findIndex((s) => s.id === failedId);
+  const later = at < 0 ? [] : plan.steps.slice(at + 1).filter((s) => (!only || only(s.id)) && s.kind !== "manual").map((s) => s.id);
+  const lines: string[] = [];
+  // A migration plan opens with the unprivileged stop of the shared unit; the way back is the same command with enable.
+  const stopStep = plan.steps.find((s) => s.id.endsWith(".stop-shared"));
+  const stopped = stopStep?.id;
+  const stopArgv = stopStep ? stepArgv(stopStep) : undefined;
+  const restore = stopArgv?.includes("disable") ? stopArgv.map((a) => (a === "disable" ? "enable" : a)) : undefined;
+  if (failed) lines.push(`Failed step: ${failed.description}\n`);
+  const moved = executed.find((id) => id.endsWith(".move-paseo-home"));
+  if (moved) {
+    lines.push(
+      `The old PASEO_HOME was already moved (${moved} ran) and the shared daemon is stopped. apply is not resumable: running migrate again stops at the ` +
+        `old-home guard, because that person is already migrated. Fix the cause, then run the steps below by hand, in this order, from ${join(out, "apply.sh")}.\n`,
+    );
+  } else if (failedId !== undefined && failedId.endsWith(".guard-old-home-dir") && restore) {
+    // Either the old home is gone because an earlier run already moved it, or homeBase is wrong. Both look the same here, and
+    // restarting the old unit is right only in the second case: in the first it starts a daemon on an empty PASEO_HOME.
+    lines.push(
+      `The old PASEO_HOME is not there. Most likely this person is already migrated (an earlier run moved it): then the old shared unit must not be re-enabled. ` +
+        `It would start a second daemon on the person's port with a fresh, empty PASEO_HOME and a new server identity, next to the account's own daemon. ` +
+        `Check where the data is (the new account's .paseo-daemon, and your homeBase) before you do anything else. ` +
+        `If instead homeBase in the config is wrong and the shared daemon's data is still where it was, fix homeBase and run migrate again; ${stopped} stopped the old unit, and the way back is the same command with enable instead of disable.\n`,
+    );
+    return lines.join("");
+  } else if (failedId !== undefined && /\.guard-old-/.test(failedId) && restore) {
+    // A migration preflight: read-only, and it runs before the account, the move and the copy.
+    lines.push(
+      `Nothing on the host was changed by this run: ${failedId} is a read-only check that runs before the account, the move and the copy, so it is safe to run this command again after you fix the cause.\n` +
+        `If the unprivileged phase already ran, ${stopped} has stopped and disabled the shared unit, so the old daemon is offline. To bring it back, as your normal user: ${restore.join(" ")}\n`,
+    );
+  } else if (restore && failedId !== undefined && failedId !== stopped) {
+    // A step after the preflight but before the move (useradd, lock-password, account-home, or the move itself). The shared
+    // unit was stopped and disabled by the unprivileged phase if that ran, and nothing here brings it back.
+    const moving = failedId.endsWith(".move-paseo-home");
+    lines.push(
+      `apply is not resumable: a second run stops at the first step that cannot be repeated (useradd, or the old-home guard once the data moved). ` +
+        `The old PASEO_HOME was not moved by this run. ` +
+        `If the unprivileged phase already ran, ${stopped} has stopped and disabled the shared unit, so the old daemon is offline. ` +
+        `To bring it back, as your normal user: ${restore.join(" ")}\n` +
+        (moving
+          ? `The move itself failed: mv across file systems copies and then deletes, so check BOTH the old and the new PASEO_HOME for a partial copy before you restart anything.\n`
+          : `A step that already ran (see ok above) may have created the account; check before you start it again: the account steps cannot be repeated.\n`),
+    );
+  } else {
+    lines.push(`apply is not resumable: a second run stops at the first step that cannot be repeated. Steps after it are listed below; they are in ${join(out, "apply.sh")}.\n`);
+  }
+  if (later.length > 0) lines.push(`Not run: ${later.join(", ")}\n`);
+  return lines.join("");
+}
 
 async function runApply(plan: Plan, out: string, io: CliIo, only?: (id: string) => boolean): Promise<number> {
   const isRoot = (io.isRoot ?? (() => process.getuid?.() === 0))();
@@ -208,7 +377,9 @@ async function runApply(plan: Plan, out: string, io: CliIo, only?: (id: string) 
   for (const id of result.executed) io.stdout(`ok     ${id}\n`);
   for (const s of result.skipped) io.stdout(`skip   ${s.id} (${s.reason})\n`);
   if (!result.ok) {
-    io.stderr(`FAILED at ${result.failed?.id} (exit ${result.failed?.code}); later steps did not run.\n`);
+    const why = result.failed?.error !== undefined ? `could not run: ${result.failed.error}` : `exit ${result.failed?.code}`;
+    io.stderr(`FAILED at ${result.failed?.id} (${why}); later steps did not run.\n`);
+    io.stderr(failureState(plan, out, result.failed?.id, result.executed, only));
     return 1;
   }
   return 0;
@@ -227,7 +398,7 @@ const isSameUser = (p: { isolation?: string | undefined }) => (p.isolation ?? "s
 // ---------------------------------------------------------------- commands that only edit the stored config
 
 async function cmdInit(args: string[], io: CliIo): Promise<number> {
-  const p = parseFlags(args, ["--from", "--listen", "--port", "--existing", "--paseo-binary", "--path", "--config"], ["--web-ui", "--force"]);
+  const p = parseFlags(args, ["--from", "--listen", "--port", "--existing", "--paseo-binary", "--path", "--config"], ["--web-ui", "--force"], ["--existing"]);
   if (p.positional.length > 0) throw new UsageError(`unexpected argument ${p.positional[0]}`);
   const store = storeFor(io, p);
   const exists = await stat(store.file).then(() => true, () => false);
@@ -272,28 +443,64 @@ async function cmdInit(args: string[], io: CliIo): Promise<number> {
     // Validate everything but the people list, which `add` fills in (a config needs at least one person to parse).
     parseConfig({ ...raw, people: [{ name: "placeholder", acknowledge: ["shared-provider-history"] }] });
   }
+  // Read the config being replaced, if it can be read, so that a name reused by a different person (or dropped) does not
+  // leave the previous person's staged password behind to be picked up by the next render.
+  const replaced = exists ? replacedNames(await readRawConfig(store.file).catch(() => ({ people: [] }) as unknown as RawConfig), raw) : [];
   await writeRawConfig(store.file, raw, store.ownDir);
+  const forgotten = replaced.length > 0 && (await forgetStagedSecrets(io, store, replaced)) === "deleted";
   io.stdout(`Wrote ${store.file} (mode 0600). The host was not changed.\n`);
+  if (forgotten) {
+    io.stdout(`Deleted the staged passwords of ${replaced.join(", ")} from the default render directory: they are gone or are a different person now, so they get new passwords. If you rendered into another --out directory, delete secrets/<name>.* there.\n`);
+  }
   io.stdout(from ? "Adopted as it is. Next: paseo-users plan\n" : "Next: paseo-users add <name> --shared\n");
   return 0;
 }
 
-async function cmdAdd(args: string[], io: CliIo): Promise<number> {
-  const p = parseFlags(args, ["--port", "--config"], ["--shared", "--separate", "--acknowledge-shared-history"]);
-  const name = p.positional[0];
-  if (!name || p.positional.length > 1) throw new UsageError("usage: add <name> --shared [--port <n>] [--acknowledge-shared-history]");
-  if (p.bools.has("--separate")) {
-    io.stderr("--separate is not implemented yet, see docs/12-separate-installs-plan.md\n");
-    return 2;
+/**
+ * Ports without an explicit value are assigned on every parse, in order, around the explicit ones. Adding a person with
+ * an explicit port that an earlier person is auto-assigned would silently move that person (and their unit and health
+ * check) while their daemon still holds the old port. Refused before anything is written.
+ */
+function refuseMovedPorts(before: RawConfig, after: ResolvedConfig, added: string): void {
+  const was = resolvedPorts(before);
+  if (!was) return;
+  const moved = after.people.filter((x) => was.has(x.name) && was.get(x.name) !== x.port);
+  if (moved.length > 0) {
+    throw new UsageError(
+      `adding ${added} would move the port of ${moved.map((x) => `${x.name} (${was.get(x.name)} -> ${x.port})`).join(", ")}, ` +
+        "whose daemon may be running there. Choose another --port, or give them an explicit port in the config first.",
+    );
   }
-  if (!p.bools.has("--shared")) throw new UsageError("choose how this person runs: --shared (same Linux user). --separate is not implemented yet.");
+}
+
+const SEPARATE_ONLY_FLAGS = ["--unix-account", "--providers", "--paseo-version"];
+
+async function cmdAdd(args: string[], io: CliIo): Promise<number> {
+  const p = parseFlags(args, ["--port", "--config", ...SEPARATE_ONLY_FLAGS], ["--shared", "--separate", "--acknowledge-shared-history"]);
+  const name = p.positional[0];
+  const usage = "usage: add <name> --shared [--port <n>] [--acknowledge-shared-history]\n   or: add <name> --separate --unix-account <acct> --providers <id,id,...> [--paseo-version <x.y.z>] [--port <n>]";
+  if (!name || p.positional.length > 1) throw new UsageError(usage);
+  const shared = p.bools.has("--shared");
+  const separate = p.bools.has("--separate");
+  if (shared && separate) throw new UsageError("--shared and --separate exclude each other: choose one");
+  if (!shared && !separate) {
+    throw new UsageError("choose how this person runs: --shared (same Linux user) or --separate (own account and own installs)");
+  }
+  if (!separate) {
+    // Fail closed: a flag that only means something for a separate person is refused, never silently ignored.
+    for (const f of SEPARATE_ONLY_FLAGS) if (p.values.has(f)) throw new UsageError(`${f} is only valid with --separate`);
+  } else if (p.bools.has("--acknowledge-shared-history")) {
+    throw new UsageError("--acknowledge-shared-history is only valid with --shared");
+  }
   const store = storeFor(io, p);
   const raw = await readRawConfig(store.file);
   const portText = p.value("--port");
   const port = portText === undefined ? undefined : Number(portText);
   if (port !== undefined && !Number.isInteger(port)) throw new UsageError("--port must be a whole number");
-  const ack = p.bools.has("--acknowledge-shared-history");
 
+  if (separate) return addSeparate(p, name, port, store, raw, io);
+
+  const ack = p.bools.has("--acknowledge-shared-history");
   let people = [...(raw.people ?? [])];
   const widened: string[] = [];
   if (ack) {
@@ -307,10 +514,52 @@ async function cmdAdd(args: string[], io: CliIo): Promise<number> {
   people.push({ name, ...(port !== undefined ? { port } : {}), ...(ack ? { acknowledge: ["shared-provider-history"] } : {}) });
   const next: RawConfig = { ...raw, people };
   const resolved = parseConfig(next); // refuses (ConfigError) before anything is written
+  refuseMovedPorts(raw, resolved, name);
   await writeRawConfig(store.file, next, store.ownDir);
+  await forgetStagedSecrets(io, store, [name]);
   const added = resolved.people.find((x) => x.name === name);
   io.stdout(`Added ${name} (shared, same Linux user) on port ${added?.port}. The host was not changed.\n`);
   if (widened.length) io.stdout(`Also recorded the shared-history acknowledgement for: ${widened.join(", ")}\n`);
+  io.stdout(`Next: paseo-users plan ${name}   then   paseo-users render   then read apply.sh and run: paseo-users apply ${name} --yes --i-understand-this-changes-the-host\n`);
+  return 0;
+}
+
+/**
+ * `add <name> --separate`: own unix account, own installs. Every value is explicit (no default account, no default
+ * version). The result is validated by parseConfig before anything is written. UNVERIFIED on a real host.
+ */
+async function addSeparate(p: Parsed, name: string, port: number | undefined, store: Store, raw: RawConfig, io: CliIo): Promise<number> {
+  const unixAccount = p.value("--unix-account");
+  if (unixAccount === undefined) throw new UsageError("--separate needs --unix-account <acct>: there is no default account name");
+  const providersText = p.value("--providers");
+  if (providersText === undefined) throw new UsageError("--separate needs --providers <id,id,...> (known: claude, codex, opencode)");
+  // Split on "," only: no trimming and no case folding, so what is stored is what was typed. Validation names bad entries.
+  const providers = providersText.split(",");
+  if (providers.some((x) => x === "")) {
+    throw new UsageError(`--providers needs a comma-separated list of provider ids without empty entries, got "${providersText}"`);
+  }
+
+  const stored = raw.paseoVersion;
+  const given = p.value("--paseo-version");
+  if (stored !== undefined && given !== undefined && given !== stored) {
+    throw new UsageError(`--paseo-version ${given} differs from the stored paseoVersion ${stored}: every separate person uses one pinned version`);
+  }
+  const paseoVersion = given ?? stored;
+  if (paseoVersion === undefined) {
+    throw new UsageError("--separate needs --paseo-version <x.y.z> (exact, no range or tag): none is stored yet");
+  }
+
+  const person = { name, isolation: "unix-account", unixAccount, install: "separate" as const, providers, ...(port !== undefined ? { port } : {}) };
+  const next: RawConfig = { ...raw, paseoVersion, people: [...(raw.people ?? []), person] };
+  const resolved = parseConfig(next); // refuses (ConfigError) before anything is written: exact version, known providers, account rules
+  refuseMovedPorts(raw, resolved, name);
+  await writeRawConfig(store.file, next, store.ownDir);
+  await forgetStagedSecrets(io, store, [name]);
+  const added = resolved.people.find((x) => x.name === name);
+  io.stdout(
+    `Added ${name} (separate: own computer account, own installs of paseo ${paseoVersion} and ${providers.join(", ")}) on port ${added?.port}. The host was not changed.\n`,
+  );
+  io.stdout(`${name} must log in to each provider (${providers.join(", ")}) by hand, in a shell as their own account. The plan cannot do it and copies no login. UNVERIFIED on a real host.\n`);
   io.stdout(`Next: paseo-users plan ${name}   then   paseo-users render   then read apply.sh and run: paseo-users apply ${name} --yes --i-understand-this-changes-the-host\n`);
   return 0;
 }
@@ -325,10 +574,36 @@ async function cmdRemove(args: string[], io: CliIo): Promise<number> {
   if (!people.some((x) => x.name === name)) {
     throw new UsageError(`unknown person "${name}" (known: ${people.map((x) => x.name).join(", ") || "none"})`);
   }
-  const next: RawConfig = { ...raw, people: people.filter((x) => x.name !== name) };
-  if (next.people.length > 0) parseConfig(next);
+  const remaining = people.filter((x) => x.name !== name);
+  const { paseoVersion: _version, ...rest } = raw;
+  // paseoVersion is only valid while someone is separate; drop it with the last separate person so remove stays possible.
+  const next: RawConfig = remaining.some((x) => x.install === "separate") ? { ...raw, people: remaining } : { ...rest, people: remaining };
+  // Everyone left keeps the port they have now: an auto-assigned port is written down when removing someone would shift it.
+  const pinned: string[] = [];
+  if (next.people.length > 0) {
+    const was = resolvedPorts(raw);
+    const nowPorts = parseConfig(next).people;
+    if (was) {
+      next.people = next.people.map((x) => {
+        const before = was.get(x.name);
+        if (x.port !== undefined || before === undefined || nowPorts.find((r) => r.name === x.name)?.port === before) return x;
+        pinned.push(`${x.name} ${before}`);
+        return { ...x, port: before };
+      });
+      if (pinned.length > 0) parseConfig(next);
+    }
+  }
   await writeRawConfig(store.file, next, store.ownDir);
+  const forgot = await forgetStagedSecrets(io, store, [name]);
   io.stdout(`Removed ${name} from the config. The host is NOT changed: their daemon, files and password still exist.\n`);
+  if (pinned.length > 0) io.stdout(`Kept the port of everyone else where it was (written into the config): ${pinned.join(", ")}.\n`);
+  io.stdout(
+    forgot === "deleted"
+      ? `The staged password files for ${name} in the default render directory were deleted, so a new ${name} gets a new password. If you rendered into another --out directory, delete secrets/${name}.* there.\n`
+      : forgot === "other-config"
+        ? `This is not the default config, so the default render directory was left alone. Delete secrets/${name}.* in any directory you rendered ${name} into, so a new ${name} gets a new password.\n`
+        : `The default render directory could not be located: delete secrets/${name}.* in any directory you rendered into, so a new ${name} gets a new password.\n`,
+  );
   io.stdout(`If they were ever applied, run "paseo-users revoke ${name}" BEFORE removing them (the plan needs the config entry).\n`);
   return 0;
 }
@@ -354,7 +629,7 @@ async function cmdList(args: string[], io: CliIo): Promise<number> {
           state = "unknown";
         }
       }
-      rows.push({ name: person.name, isolation: person.isolation, mode: person.isolation === "same-user" ? "shared" : person.isolation, port: person.port, state });
+      rows.push({ name: person.name, isolation: person.isolation, mode: person.install === "separate" ? "separate" : person.isolation === "same-user" ? "shared" : person.isolation, port: person.port, state });
     }
   }
   if (p.bools.has("--json")) {
@@ -437,6 +712,15 @@ async function cmdRevokePlan(args: string[], io: CliIo): Promise<number> {
 
 async function cmdApply(args: string[], io: CliIo): Promise<number> {
   const p = parseFlags(args, ["--out", "--config"], APPLY_FLAGS);
+  // A trailing name is never ignored: `plan <config> <name>` is scoped, so `apply <config> <name>` must not widen to the
+  // whole host plan, and the stored-config form takes exactly one name.
+  if (p.positional.length > 1) {
+    throw new UsageError(
+      isConfigArg(p.positional[0])
+        ? `apply <config.json> applies the whole plan and takes no person name (got "${p.positional[1]}"). To apply one person, store the config and run: paseo-users apply ${p.positional[1]}`
+        : `apply takes one person name, got ${p.positional.length}: ${p.positional.join(" ")}`,
+    );
+  }
   if (!hasApplyFlags(p)) {
     io.stderr(REFUSAL);
     return 2;
@@ -466,7 +750,7 @@ async function cmdApply(args: string[], io: CliIo): Promise<number> {
     io.stderr(`refusing: ${rendered === undefined ? "nothing was rendered yet" : "the rendered plan was out of date"}. It is rendered now. Read ${r.outDir}/apply.sh, then run this command again.\n`);
     return 2;
   }
-  return runApply(plan, out, io, (id) => stepBelongsTo(id, name));
+  return runApply(plan, out, io, personStepFilter(plan, name));
 }
 
 async function cmdRevoke(args: string[], io: CliIo): Promise<number> {
@@ -489,6 +773,55 @@ async function cmdRevoke(args: string[], io: CliIo): Promise<number> {
     return 0;
   }
   return runApply(plan, out, io);
+}
+
+async function cmdMigrate(args: string[], io: CliIo): Promise<number> {
+  const p = parseFlags(args, ["--out", "--config"], ["--apply", ...APPLY_FLAGS]);
+  const wantApply = p.bools.has("--apply");
+  if (wantApply && !hasApplyFlags(p)) {
+    io.stderr(REFUSAL);
+    return 2;
+  }
+  if (p.positional.length > 1) throw new UsageError("usage: migrate <name> [--out <dir>] [--apply --yes --i-understand-this-changes-the-host]");
+  const config = await loadStored(storeFor(io, p));
+  const name = requirePerson(config, p.positional[0]);
+  // Refuses (exit 2) unless the stored config already describes this person as separate. Nothing is rendered before that.
+  const plan = planMigrate(config, name);
+  const person = config.people.find((x) => x.name === name);
+  if (person) {
+    const old = sharedLayout(person, config);
+    await refuseOutInside(p.value("--out") ?? join(stateDir(io.env ?? {}), `migrate-${name}`), [old.home, old.envFile]);
+  }
+  const out = await outDirFor(io, p, `migrate-${name}`);
+  io.stdout(summary(plan));
+  if (wantApply) {
+    // Same gate as `apply <name>`: what runs is what was rendered and could be read. Without it the plan would be rendered
+    // and applied in one call, and applyPlan would compare the plan with a plan.json written a moment earlier.
+    const reviewed = await readFile(join(out, "plan.json"), "utf8").catch(() => undefined);
+    let current = false;
+    try {
+      current = reviewed !== undefined && JSON.stringify(JSON.parse(reviewed)) === JSON.stringify(plan);
+    } catch {
+      current = false;
+    }
+    if (!current) {
+      const fresh = await renderPlan(plan, out);
+      io.stdout(`Rendered to ${fresh.outDir}.\n`);
+      io.stderr(
+        `refusing: ${reviewed === undefined ? "nothing was rendered yet" : "the rendered plan was out of date"}. It is rendered now. ` +
+          `Read ${fresh.outDir}/apply.sh, then run this command again (as your normal user, then as root).\n`,
+      );
+      return 2;
+    }
+    return runApply(plan, out, io);
+  }
+  // renderPlan, not renderHost: the plan has no secret to stage (the existing password is carried by a copy step), so no
+  // password is generated and no secrets/ directory is written.
+  const r = await renderPlan(plan, out);
+  io.stdout(`Rendered to ${r.outDir}. No password was generated; the existing one is copied across. Read apply.sh there.\n`);
+  io.stdout(`Nothing was applied: the host was not changed. To apply: paseo-users migrate ${name} --apply --yes --i-understand-this-changes-the-host\n`);
+  io.stdout("Run it twice: once as your normal user (stops the shared daemon), then as root (the first root step refuses while the old daemon may still run). It applies only the plan rendered here; if the config changed since, it renders again and stops.\n");
+  return 0;
 }
 
 async function cmdPassword(args: string[], io: CliIo): Promise<number> {
@@ -517,7 +850,13 @@ async function cmdPassword(args: string[], io: CliIo): Promise<number> {
   io.stdout("The running daemon keeps the old password until you do these two steps:\n");
   if (argv) {
     io.stdout(`  1. ${step?.privileged ? "as root" : "as your normal user"}: cd ${shellQuote(r.outDir)} && ${argv.map(shellQuote).join(" ")}\n`);
-    io.stdout(`     (or: paseo-users apply ${name} --yes --i-understand-this-changes-the-host, which also re-runs ${name}'s other steps)\n`);
+    // Only a same-user person's steps can be run again. A unix-account plan starts with useradd, which stops once the
+    // account exists, so a full apply would fail there before reaching this step.
+    io.stdout(
+      person?.isolation === "same-user"
+        ? `     (or: paseo-users apply ${name} --yes --i-understand-this-changes-the-host, which also re-runs ${name}'s other steps)\n`
+        : `     (do not re-run apply for ${name}: it stops at the account creation, which cannot be repeated)\n`,
+    );
   }
   io.stdout(
     person?.isolation === "same-user"
@@ -550,6 +889,8 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
         return await cmdApply(rest, io);
       case "revoke":
         return await cmdRevoke(rest, io);
+      case "migrate":
+        return await cmdMigrate(rest, io);
       case "password":
         return await cmdPassword(rest, io);
       case "--version":

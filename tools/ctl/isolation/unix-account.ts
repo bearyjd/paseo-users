@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import type { Person, ResolvedConfig } from "../config.js";
 import type { IsolationStrategy, Step } from "./index.js";
+import { getProvider } from "../providers.js";
 import { healthUrl, renderUnit, unitName } from "./shared.js";
 
 const { join } = posix;
@@ -12,6 +13,48 @@ const envFile = (p: Person, ctx: ResolvedConfig) => join(accountHome(p, ctx), ".
 const optionalEnvFile = (p: Person, ctx: ResolvedConfig) => join(accountHome(p, ctx), ".paseo-provider.env");
 const unitDir = (p: Person, ctx: ResolvedConfig) => join(accountHome(p, ctx), ".config", "systemd", "user");
 const unitPath = (p: Person, ctx: ResolvedConfig) => join(unitDir(p, ctx), unitName(p.name));
+/** The account's own npm prefix and the binaries in it (separate installs only). */
+const npmPrefix = (p: Person, ctx: ResolvedConfig) => join(accountHome(p, ctx), ".local", "npm");
+const npmBin = (p: Person, ctx: ResolvedConfig) => join(npmPrefix(p, ctx), "bin");
+/** Fixed system PATH for account-level commands and the unit. Never derived from the operator's environment. */
+const SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin";
+/**
+ * Run a command as the account, with its own HOME and a fixed PATH and nothing else: `env -i` drops every inherited
+ * variable (npm tokens, API keys, NPM_CONFIG_*, NODE_OPTIONS, LD_PRELOAD) that the root apply process might carry.
+ * Shaped for a privileged step: apply runs it as root, runuser drops to the account. UNVERIFIED on a real host.
+ */
+const asAccount = (p: Person, ctx: ResolvedConfig, ...argv: string[]) => [
+  "runuser", "-u", acct(p), "--", "env", "-i", `HOME=${accountHome(p, ctx)}`, `PATH=${SYSTEM_PATH}`, ...argv,
+];
+const isSeparate = (p: Person) => p.install === "separate";
+
+/** The account's own layout, for the migration planner (it moves an existing PASEO_HOME and env file to these paths). */
+export const accountLayout = (p: Person, ctx: ResolvedConfig) => ({
+  account: acct(p),
+  accountHome: accountHome(p, ctx),
+  home: home(p, ctx),
+  envFile: envFile(p, ctx),
+});
+/** Whether `child` is `parent` or below it, by whole path segments. */
+const inside = (parent: string, child: string) => {
+  const rel = posix.relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith("../") && !posix.isAbsolute(rel));
+};
+/**
+ * Whether a path is, or is under, an operator value that a separate person's plan must not carry: userHome (which also
+ * covers every %h entry of environmentPath, as ".." is not allowed), the host paseoBinary or an absolute environmentPath entry.
+ */
+const isOperatorPath = (path: string, ctx: ResolvedConfig) =>
+  [ctx.userHome, ctx.paseoBinary, ...(ctx.environmentPath ?? "").split(":").filter((e) => e.startsWith("/"))].some((o) => inside(o, path));
+/**
+ * Whether naming `path` in a separate person's plan would disclose an operator value: the path is, or is under, one,
+ * or is a directory that contains one (a legacy account whose home holds the host paseoBinary).
+ */
+const revealsOperatorPath = (path: string, ctx: ResolvedConfig) =>
+  isOperatorPath(path, ctx) ||
+  [ctx.userHome, ctx.paseoBinary, ...(ctx.environmentPath ?? "").split(":").filter((e) => e.startsWith("/"))].some((o) => inside(path, o));
+/** The paseo binary the unit runs: the account's own for a separate install, the host's otherwise. */
+const daemonBinary = (p: Person, ctx: ResolvedConfig) => (isSeparate(p) ? join(npmBin(p, ctx), "paseo") : ctx.paseoBinary);
 /** Run systemctl against another account's user manager. Works only as root. UNVERIFIED on a real host. */
 const userCtl = (p: Person, ...args: string[]) => ["systemctl", `--machine=${acct(p)}@.host`, "--user", ...args];
 
@@ -23,9 +66,12 @@ const userCtl = (p: Person, ...args: string[]) => ["systemctl", `--machine=${acc
 export const unixAccount: IsolationStrategy = {
   id: "unix-account",
 
-  validate(person) {
+  validate(person, ctx) {
     const errors: string[] = [];
     if (!person.unixAccount) errors.push(`${person.name}: isolation "unix-account" requires unixAccount`);
+    if (isSeparate(person) && ctx.paseoVersion === undefined) {
+      errors.push(`${person.name}: install "separate" requires paseoVersion`);
+    }
     return errors;
   },
 
@@ -54,30 +100,8 @@ export const unixAccount: IsolationStrategy = {
         kind: "dir",
         dir: { path: accountHome(person, ctx), mode: "0700", owner: a },
       }),
-      root({
-        id: `${n}.paseo-home`,
-        description: `PASEO_HOME for ${n} (0700, owned by ${a})`,
-        kind: "dir",
-        dir: { path: home(person, ctx), mode: "0700", owner: a },
-      }),
-      root({
-        id: `${n}.config-dir`,
-        description: `${a}'s .config (0700, owned by ${a})`,
-        kind: "dir",
-        dir: { path: join(accountHome(person, ctx), ".config"), mode: "0700", owner: a },
-      }),
-      root({
-        id: `${n}.systemd-dir`,
-        description: `${a}'s .config/systemd (0700, owned by ${a})`,
-        kind: "dir",
-        dir: { path: join(accountHome(person, ctx), ".config", "systemd"), mode: "0700", owner: a },
-      }),
-      root({
-        id: `${n}.unit-dir`,
-        description: `${a}'s systemd user unit directory (0700, owned by ${a})`,
-        kind: "dir",
-        dir: { path: unitDir(person, ctx), mode: "0700", owner: a },
-      }),
+      ...(isSeparate(person) ? accountDirSteps(person, ctx, root) : legacyDirSteps(person, ctx, root)),
+      ...(isSeparate(person) ? guardSteps(person, ctx, root) : []),
       root({
         id: `${n}.secret-env`,
         description: `Install ${n}'s daemon password as an EnvironmentFile (0600, owned by ${a}, plaintext at rest)`,
@@ -96,13 +120,18 @@ export const unixAccount: IsolationStrategy = {
             name: n,
             paseoHome: home(person, ctx),
             listen: `${ctx.listenAddress}:${person.port}`,
-            paseoBinary: ctx.paseoBinary,
+            paseoBinary: daemonBinary(person, ctx),
+            // A separate install gets a PATH of its own directories; others keep the unit without a PATH, as before.
+            ...(isSeparate(person) ? { environmentPath: `${npmBin(person, ctx)}:${SYSTEM_PATH}` } : {}),
             envFile: envFile(person, ctx),
             optionalEnvFile: optionalEnvFile(person, ctx),
             ...(ctx.webUi ? { webUi: true } : {}),
           }),
         },
       }),
+      // Account code (the npm installs and their lifecycle scripts) runs only after every root write into the account
+      // home, so no root `install` can follow a path that code has had the chance to replace.
+      ...(isSeparate(person) ? installSteps(person, ctx, root) : []),
       root({
         id: `${n}.linger`,
         description: `Start ${a}'s user manager now and at boot`,
@@ -123,11 +152,17 @@ export const unixAccount: IsolationStrategy = {
       }),
       {
         id: `${n}.llm-login`,
-        description:
+        description: isSeparate(person)
+          ? `MANUAL: LLM logins are NOT shared and the plan never logs in for you. Log in as ${a} (for example: sudo -iu ${a}, with ` +
+            `${npmBin(person, ctx)} on PATH), once per provider, see the ${n}.login-* steps. ` +
+            `Or put an API key in ${optionalEnvFile(person, ctx)} (0600, owned by ${a}; the unit reads it if present). ` +
+            `Whether these login flows work for a per-account npm install is UNVERIFIED.`
+          :
           `MANUAL: LLM logins are NOT shared. Log each provider CLI in as ${a} (for example: sudo -iu ${a}), or put an API key ` +
           `in ${optionalEnvFile(person, ctx)} (0600, owned by ${a}; the unit reads it if present). Which variables each provider reads is UNVERIFIED.`,
         kind: "manual",
       },
+      ...(isSeparate(person) ? loginSteps(person, ctx) : []),
     ];
   },
 
@@ -183,22 +218,52 @@ export const unixAccount: IsolationStrategy = {
     ];
     for (const other of others) {
       if (other.isolation === "unix-account") {
+        // The command below runs with the neighbour's HOME. Where that would disclose an operator path, leave the check out.
+        if (isSeparate(person) && revealsOperatorPath(accountHome(other, ctx), ctx)) continue;
         steps.push({
           id: `${person.name}.${other.name}.verify-unreadable`,
           description: `${other.unixAccount} cannot read ${person.name}'s PASEO_HOME`,
           kind: "command",
-          command: ["sudo", "-u", acct(other), "test", "!", "-r", home(person, ctx)],
+          // A separate install uses the scrubbed wrapper; people without one keep the plain sudo form.
+          command:
+            isSeparate(person) || isSeparate(other)
+              ? asAccount(other, ctx, "test", "!", "-r", home(person, ctx))
+              : ["sudo", "-u", acct(other), "test", "!", "-r", home(person, ctx)],
           privileged: true,
         });
       } else if (other.isolation === "same-user") {
+        // A separate person's plan must not name an operator path. A same-user PASEO_HOME under userHome (the default)
+        // is covered by the MANUAL verify-operator-home step below. One that is, or sits under, the host paseoBinary or an
+        // absolute environmentPath entry would put that operator value into the plan, so the check is left out there.
+        const neighbour = join(ctx.homeBase, other.name);
+        if (isSeparate(person) && isOperatorPath(neighbour, ctx)) continue;
         steps.push({
           id: `${person.name}.${other.name}.verify-unreadable-from-account`,
           description: `${a} cannot read ${other.name}'s PASEO_HOME (same-user daemon)`,
           kind: "command",
-          command: ["sudo", "-u", a, "test", "!", "-r", join(ctx.homeBase, other.name)],
+          command: isSeparate(person)
+            ? asAccount(person, ctx, "test", "!", "-r", neighbour)
+            : ["sudo", "-u", a, "test", "!", "-r", neighbour],
           privileged: true,
         });
       }
+    }
+    if (isSeparate(person)) {
+      steps.push({
+        id: `${person.name}.verify-install`,
+        description: `${a}'s own paseo starts (prints its version; it is the pinned ${ctx.paseoVersion ?? "?"}) (UNVERIFIED on a real host)`,
+        kind: "command",
+        command: asAccount(person, ctx, daemonBinary(person, ctx), "--version"),
+        privileged: true,
+      });
+      // MANUAL and without the path: a separate person's plan never contains userHome, not even in a hand-run check.
+      steps.push({
+        id: `${person.name}.verify-operator-home`,
+        description:
+          `MANUAL: confirm ${a} cannot read the operator's home directory (the userHome in the config): as ${a} (for example: ` +
+          `sudo -iu ${a}), try to list it and expect "Permission denied". UNVERIFIED on a real host.`,
+        kind: "manual",
+      });
     }
     steps.push({
       id: `${person.name}.verify-app`,
@@ -210,3 +275,125 @@ export const unixAccount: IsolationStrategy = {
     return steps;
   },
 };
+
+type RootStep = (s: Omit<Step, "privileged">) => Step;
+
+/** Account directories for a person without a separate install. Unchanged from before: root creates them. */
+function legacyDirSteps(person: Person, ctx: ResolvedConfig, root: RootStep): Step[] {
+  const n = person.name;
+  const a = acct(person);
+  const dir = (id: string, description: string, path: string) =>
+    root({ id: `${n}.${id}`, description, kind: "dir", dir: { path, mode: "0700", owner: a } });
+  return [
+    dir("paseo-home", `PASEO_HOME for ${n} (0700, owned by ${a})`, home(person, ctx)),
+    dir("config-dir", `${a}'s .config (0700, owned by ${a})`, join(accountHome(person, ctx), ".config")),
+    dir("systemd-dir", `${a}'s .config/systemd (0700, owned by ${a})`, join(accountHome(person, ctx), ".config", "systemd")),
+    dir("unit-dir", `${a}'s systemd user unit directory (0700, owned by ${a})`, unitDir(person, ctx)),
+  ];
+}
+
+/**
+ * Create a directory as the account, never as root. Root's `install -d -o` follows a symlink in any parent component
+ * and chowns the target, so inside a home the account controls only the account may create directories.
+ * Parents come first and the mode applies to the last component only, so each level is its own step.
+ */
+const accountDir = (person: Person, ctx: ResolvedConfig, root: RootStep, id: string, description: string, path: string): Step =>
+  root({
+    id: `${person.name}.${id}`,
+    description: `${description} (0700, created as ${acct(person)}) (UNVERIFIED on a real host)`,
+    kind: "command",
+    command: asAccount(person, ctx, "mkdir", "-p", "-m", "0700", path),
+  });
+
+/** Account directories for a separate install, created as the account. The account home itself stays a root step. */
+function accountDirSteps(person: Person, ctx: ResolvedConfig, root: RootStep): Step[] {
+  const a = acct(person);
+  const h = accountHome(person, ctx);
+  return [
+    accountDir(person, ctx, root, "paseo-home", `PASEO_HOME for ${person.name}`, home(person, ctx)),
+    accountDir(person, ctx, root, "config-dir", `${a}'s .config`, join(h, ".config")),
+    accountDir(person, ctx, root, "systemd-dir", `${a}'s .config/systemd`, join(h, ".config", "systemd")),
+    accountDir(person, ctx, root, "unit-dir", `${a}'s systemd user unit directory`, unitDir(person, ctx)),
+  ];
+}
+
+/**
+ * Checks that run just before root writes the env file and the unit into the account home: every path root's `install`
+ * would resolve through must not be a symlink. Account code cannot have replaced one on a first apply, because the
+ * installs run after these writes. If the steps are run again by hand (the CLI's `apply` cannot: it stops at the non-idempotent
+ * useradd) the account may have, so these refuse it. A check cannot
+ * close a race with a running account process: root's `install` is still not symlink-safe (household-level trust,
+ * docs/04-threat-model.md T20). UNVERIFIED on a real host.
+ */
+function guardSteps(person: Person, ctx: ResolvedConfig, root: RootStep): Step[] {
+  const n = person.name;
+  const h = accountHome(person, ctx);
+  const paths: [string, string][] = [
+    ["config", join(h, ".config")],
+    ["systemd", join(h, ".config", "systemd")],
+    ["unit-dir", unitDir(person, ctx)],
+    ["secret-env", envFile(person, ctx)],
+    ["unit", unitPath(person, ctx)],
+  ];
+  return paths.map(([id, path]) =>
+    root({
+      id: `${n}.guard-${id}`,
+      description: `Refuse to continue if ${path} is a symbolic link (root writes below it next)`,
+      kind: "command",
+      command: asAccount(person, ctx, "test", "!", "-L", path),
+    }),
+  );
+}
+
+/**
+ * Steps that give a separate person their own paseo and provider CLIs: one npm prefix inside the account home.
+ * Describes only. Versions: paseo is pinned to `paseoVersion`; provider CLIs are not pinned (latest at install time).
+ * That the installs and each provider's login work for a per-account prefix is UNVERIFIED on a real host.
+ */
+function installSteps(person: Person, ctx: ResolvedConfig, root: RootStep): Step[] {
+  const n = person.name;
+  const a = acct(person);
+  const version = ctx.paseoVersion;
+  // Fail closed: no silent default version, and getProvider throws on an unknown provider id.
+  if (version === undefined) throw new Error(`${n}: install "separate" requires paseoVersion`);
+  const providers = person.providers.map((id) => getProvider(id));
+  if (providers.length === 0) throw new Error(`${n}: install "separate" requires at least one provider`);
+  const prefix = npmPrefix(person, ctx);
+  const npmInstall = (pkg: string) => asAccount(person, ctx, "npm", "install", "--global", "--prefix", prefix, pkg);
+  return [
+    accountDir(person, ctx, root, "local-dir", `${a}'s .local`, join(accountHome(person, ctx), ".local")),
+    accountDir(person, ctx, root, "npm-prefix", `${a}'s own npm prefix; binaries go to ${npmBin(person, ctx)}`, prefix),
+    root({
+      id: `${n}.install-paseo`,
+      description: `Install @getpaseo/cli@${version} into ${a}'s npm prefix, as ${a} (UNVERIFIED on a real host)`,
+      kind: "command",
+      command: npmInstall(`@getpaseo/cli@${version}`),
+    }),
+    ...providers.map((pr) =>
+      root({
+        id: `${n}.install-${pr.id}`,
+        description: `Install ${pr.npmPackage} (latest, not pinned) into ${a}'s npm prefix, as ${a} (UNVERIFIED on a real host)`,
+        kind: "command",
+        command: npmInstall(pr.npmPackage),
+      }),
+    ),
+  ];
+}
+
+/**
+ * One manual login step per listed provider. Never runs a login, never copies or references a credential: the person
+ * logs in themselves as their own account. Whether each login flow works for a per-account npm install is UNVERIFIED.
+ */
+function loginSteps(person: Person, ctx: ResolvedConfig): Step[] {
+  const a = acct(person);
+  return person.providers.map((id) => {
+    const pr = getProvider(id);
+    return {
+      id: `${person.name}.login-${pr.id}`,
+      description:
+        `MANUAL: log in to ${pr.id} as ${a} (for example: sudo -iu ${a}, with ${npmBin(person, ctx)} on PATH): ${pr.loginHint}. ` +
+        `This login is not shared with any other account. UNVERIFIED on a real host.`,
+      kind: "manual",
+    };
+  });
+}

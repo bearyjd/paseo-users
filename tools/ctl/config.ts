@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import { z } from "zod";
 import { DEFAULT_ISOLATION, defaultRegistry } from "./isolation/registry.js";
 import type { IsolationRegistry } from "./isolation/index.js";
+import { PROVIDER_IDS } from "./providers.js";
 
 /** Paseo's default daemon port. A person's daemon there would collide with, or be mistaken for, the existing daemon. */
 export const DEFAULT_PASEO_PORT = 6767;
@@ -9,7 +10,7 @@ export const DEFAULT_PASEO_PORT = 6767;
 const SAFE_PATH = /^\/[A-Za-z0-9._+@/-]*$/;
 const RESERVED_NAMES: ReadonlySet<string> = new Set(["same-user", "unix-account"]);
 export const PERSON_NAME = /^[a-z][a-z0-9_-]{1,31}$/;
-const UNIX_NAME = /^[a-z_][a-z0-9_-]{0,31}$/;
+export const UNIX_NAME = /^[a-z_][a-z0-9_-]{0,31}$/;
 // IPv4, hostname, or bracketed IPv6. No whitespace, no systemd specifiers.
 const LISTEN = /^(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9.-]+)$/;
 const ALL_INTERFACES = new Set(["0.0.0.0", "::", "[::]"]);
@@ -21,6 +22,13 @@ const absPath = (what: string) =>
       (p) => SAFE_PATH.test(p) && p.length > 1 && posix.normalize(p) === p && !p.endsWith("/"),
       `${what} must be a normalized absolute path using only [A-Za-z0-9._+@/-], not "/"`,
     );
+
+/**
+ * Exact version: x.y.z with an optional -prerelease suffix. No ranges, tags, build metadata or whitespace.
+ * Prerelease identifiers follow SemVer 2.0 section 9: a numeric identifier has no leading zero.
+ */
+const PRERELEASE_ID = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
+export const EXACT_VERSION = new RegExp(`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-${PRERELEASE_ID}(\\.${PRERELEASE_ID})*)?$`);
 
 const port = z.number().int().min(1024, "port must be >= 1024").max(65535);
 
@@ -44,11 +52,20 @@ const PersonSchema = z
      * `people`, or any `existingDaemons`) must list "shared-provider-history".
      */
     acknowledge: z.array(z.string()).optional(),
+    /**
+     * Opt-in install mode. "separate" (unix-account only) gives the account its own paseo and provider CLIs, see
+     * docs/12-separate-installs-plan.md. "shared" (same-user only) is today's behaviour. Absent keeps today's behaviour.
+     */
+    install: z.enum(["shared", "separate"]).optional(),
+    /** Provider CLIs to install for a separate person. Ids from the provider catalog. */
+    providers: z.array(z.string()).optional(),
   })
   .strict();
 
 // One PATH entry: absolute directory, or %h (systemd's specifier for the user's home) followed by
-// an optional sub-path. No other specifier, no spaces, quotes or empty entries.
+// an optional sub-path. No other specifier, no spaces, quotes or empty entries. "." and ".." segments are allowed here
+// (a same-user config that used them before keeps working); parseConfig refuses them when a person is separate, where
+// they would let an entry dodge the account-home overlap check.
 const PATH_SEGMENT = "[A-Za-z0-9_.+@-]+";
 const PATH_ENTRY = `(?:%h(?:/${PATH_SEGMENT})*|(?:/${PATH_SEGMENT})+|/)`;
 const ENV_PATH = new RegExp(`^${PATH_ENTRY}(?::${PATH_ENTRY})*$`);
@@ -60,6 +77,8 @@ export const ConfigSchema = z
     basePort: port,
     paseoBinary: absPath("paseoBinary"),
     homeBase: absPath("homeBase").optional(),
+    /** Exact paseo version installed for every separate person. Required when one exists, an error otherwise. */
+    paseoVersion: z.string().optional(),
     /**
      * PATH for same-user daemons, as a colon-separated list of absolute directories. systemd user
      * units start with a minimal PATH, so without this the daemon may not find provider CLIs
@@ -86,6 +105,10 @@ export interface Person {
   /** Resolved: explicit or assigned from basePort. */
   port: number;
   unixAccount?: string;
+  /** Set only for a separate install. Absent means today's behaviour (host paseoBinary, or shared). */
+  install?: "separate";
+  /** Provider ids to install; always empty unless `install` is "separate". */
+  providers: string[];
 }
 
 export interface ResolvedConfig {
@@ -94,6 +117,8 @@ export interface ResolvedConfig {
   paseoBinary: string;
   homeBase: string;
   environmentPath?: string;
+  /** Present only when at least one person is separate. */
+  paseoVersion?: string;
   unixAccountHomeBase: string;
   webUi: boolean;
   allowAllInterfaces: boolean;
@@ -111,7 +136,8 @@ export class ConfigError extends Error {
 
 const isInside = (parent: string, child: string) => {
   const rel = posix.relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !posix.isAbsolute(rel));
+  // Whole segments: a child directory named "..x" is inside, only ".." and "../..." are outside.
+  return rel === "" || (rel !== ".." && !rel.startsWith("../") && !posix.isAbsolute(rel));
 };
 
 function dupes<T>(items: T[]): T[] {
@@ -173,7 +199,15 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
       assigned = next;
       taken.add(next);
     }
-    return { name: p.name, isolation: p.isolation, port: assigned, ...(p.unixAccount ? { unixAccount: p.unixAccount } : {}) };
+    const separate = p.install === "separate";
+    return {
+      name: p.name,
+      isolation: p.isolation,
+      port: assigned,
+      ...(p.unixAccount ? { unixAccount: p.unixAccount } : {}),
+      ...(separate ? { install: "separate" as const } : {}),
+      providers: separate ? [...(p.providers ?? [])] : [],
+    };
   });
   for (const p of people) {
     if (p.port > 65535) issues.push(`${p.name}: no free port left at or above basePort`);
@@ -185,6 +219,7 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
     paseoBinary: c.paseoBinary,
     homeBase,
     ...(c.environmentPath ? { environmentPath: c.environmentPath } : {}),
+    ...(c.paseoVersion !== undefined && c.people.some((p) => p.install === "separate") ? { paseoVersion: c.paseoVersion } : {}),
     unixAccountHomeBase: c.unixAccountHomeBase,
     webUi: c.webUi,
     allowAllInterfaces: c.allowAllInterfaces,
@@ -199,13 +234,54 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
         issues.push(`${p.name}: unknown acknowledge value "${a}" (known: ${ACKNOWLEDGEMENTS.join(", ")})`);
       }
     }
-    const hasNeighbour = c.people.length > 1 || c.existingDaemons.length > 0;
+    // A separate person has their own Linux user, so they share no provider history with anyone. Everyone else counts.
+    const hasNeighbour = c.people.some((o) => o !== p && o.install !== "separate") || c.existingDaemons.length > 0;
     if (p.isolation === DEFAULT_ISOLATION && hasNeighbour && !(p.acknowledge ?? []).includes("shared-provider-history")) {
       issues.push(
         `${p.name}: same-user people share the Linux user's provider session history and project directories with the other ` +
           `daemons on this machine. Accept that trade-off by adding "acknowledge": ["shared-provider-history"] to ${p.name} ` +
           `(or use: paseo-users add ${p.name} --shared --acknowledge-shared-history)`,
       );
+    }
+  }
+
+  // Install mode. Everything given for a person who is not separate is an error, never silently ignored.
+  for (const p of c.people) {
+    if (p.install === "separate") {
+      if (p.isolation !== "unix-account") issues.push(`${p.name}: install "separate" requires isolation "unix-account"`);
+      if (p.providers === undefined || p.providers.length === 0) {
+        issues.push(`${p.name}: install "separate" requires providers, a non-empty list (known: ${PROVIDER_IDS.join(", ")})`);
+      }
+      for (const id of p.providers ?? []) {
+        if (!PROVIDER_IDS.includes(id)) issues.push(`${p.name}: unknown provider "${id}" (known: ${PROVIDER_IDS.join(", ")})`);
+      }
+      for (const id of dupes(p.providers ?? [])) issues.push(`${p.name}: duplicate provider "${id}"`);
+      if (c.paseoVersion === undefined) {
+        issues.push(`${p.name}: top-level paseoVersion is required for install "separate" (exact x.y.z)`);
+      }
+    } else {
+      if (p.install === "shared" && p.isolation !== DEFAULT_ISOLATION) {
+        issues.push(`${p.name}: install "shared" requires isolation "${DEFAULT_ISOLATION}"`);
+      }
+      if (p.providers !== undefined) issues.push(`${p.name}: providers is only valid with install "separate"`);
+    }
+  }
+  if (c.paseoVersion !== undefined) {
+    if (!EXACT_VERSION.test(c.paseoVersion)) {
+      issues.push(`paseoVersion must be an exact version (x.y.z, optional -prerelease), not a range or tag: "${c.paseoVersion}"`);
+    }
+    if (!c.people.some((p) => p.install === "separate")) {
+      issues.push(`paseoVersion is only used by separate installs, but no person has install "separate"`);
+    }
+  }
+
+  // "." and ".." segments are fine for a same-user daemon's PATH. With a separate person they could dodge the
+  // account-home overlap check below, which compares the entries as written, so they are refused.
+  if (c.people.some((p) => p.install === "separate")) {
+    for (const entry of (c.environmentPath ?? "").split(":")) {
+      if (entry.split("/").some((seg) => seg === "." || seg === "..")) {
+        issues.push(`environmentPath entry "${entry}" has a "." or ".." segment; this is not allowed while a person is separate`);
+      }
     }
   }
 
@@ -220,9 +296,68 @@ export function parseConfig(raw: unknown, registry: IsolationRegistry = defaultR
     const home = strategy.paseoHome(p, ctx);
     homes.push(home);
     if (isInside(defaultHome, home)) issues.push(`${p.name}: PASEO_HOME ${home} is the default ~/.paseo or inside it`);
+    if (p.isolation === "unix-account" && p.unixAccount) {
+      // A separate install gets its own npm prefix in a chowned account home. It must not be, contain or sit inside the
+      // operator's home, homeBase, the host paseo binary or a PATH entry. A legacy unix-account person (no install field)
+      // is not checked: it never uses those, and these rules would reject configs that worked before.
+      const accountHome = posix.join(c.unixAccountHomeBase, p.unixAccount);
+      const others: (readonly [string, string])[] = [];
+      if (p.install === "separate") {
+        others.push(["userHome", c.userHome], ["homeBase", homeBase], ["paseoBinary", c.paseoBinary]);
+        // %h entries are relative to the operator's home, which is already covered by userHome (no ".." segment is allowed).
+        for (const entry of (c.environmentPath ?? "").split(":")) {
+          if (entry.startsWith("/")) others.push(["environmentPath entry", entry]);
+        }
+      }
+      for (const [label, other] of others) {
+        if (isInside(accountHome, other) || isInside(other, accountHome)) {
+          issues.push(`${p.name}: account home ${accountHome} equals, contains or is inside ${label} ${other}; choose another unixAccount or unixAccountHomeBase`);
+        }
+      }
+    }
   }
   for (const h of dupes(homes)) issues.push(`duplicate PASEO_HOME: ${h}`);
 
   if (issues.length > 0) throw new ConfigError(issues);
   return ctx;
+}
+
+/**
+ * Checks a ResolvedConfig that may not have come from parseConfig (a library caller can build one by hand) with every rule
+ * parseConfig applies: names, paths, ports, the account-home overlaps, install mode. Throws ConfigError listing every problem.
+ * Returns nothing: it validates, it does not rewrite. Acknowledgements are not part of a resolved config, so each same-user
+ * person is given the shared-history acknowledgement here; that rule is about the host plan, not about the data checked.
+ */
+export function revalidateResolved(ctx: ResolvedConfig, registry: IsolationRegistry = defaultRegistry): void {
+  // The raw schema lets a port be left out (parseConfig then assigns one); a resolved person must already have one.
+  const noPort = ctx.people.filter((p) => !Number.isInteger(p.port)).map((p) => `${p.name}: port must be a whole number, got ${String(p.port)}`);
+  if (noPort.length > 0) throw new ConfigError(noPort);
+  parseConfig(
+    {
+      userHome: ctx.userHome,
+      listenAddress: ctx.listenAddress,
+      // Every port is explicit below, so the base is only there to satisfy the schema.
+      basePort: 1024,
+      paseoBinary: ctx.paseoBinary,
+      homeBase: ctx.homeBase,
+      ...(ctx.paseoVersion !== undefined ? { paseoVersion: ctx.paseoVersion } : {}),
+      ...(ctx.environmentPath !== undefined ? { environmentPath: ctx.environmentPath } : {}),
+      unixAccountHomeBase: ctx.unixAccountHomeBase,
+      webUi: ctx.webUi,
+      allowAllInterfaces: ctx.allowAllInterfaces,
+      allowDefaultPort: ctx.allowDefaultPort,
+      existingDaemons: ctx.existingDaemons,
+      people: ctx.people.map((p) => ({
+        name: p.name,
+        isolation: p.isolation,
+        port: p.port,
+        ...(p.unixAccount !== undefined ? { unixAccount: p.unixAccount } : {}),
+        ...(p.install !== undefined ? { install: p.install } : {}),
+        // A resolved person always has a list; a non-separate one with entries is the error parseConfig reports.
+        ...(p.install === "separate" || p.providers.length > 0 ? { providers: p.providers } : {}),
+        acknowledge: ["shared-provider-history"],
+      })),
+    },
+    registry,
+  );
 }

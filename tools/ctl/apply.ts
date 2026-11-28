@@ -1,10 +1,10 @@
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Plan } from "./plan.js";
-import { fileSourceRel, secretSourceRel, stepArgv } from "./shell.js";
+import { fileSourceRel, runsAsAccount, secretSourceRel, stepArgv } from "./shell.js";
 
 export interface CommandRunner {
-  /** Runs one argv (no shell) with the output directory as cwd. Never called by tests with a real implementation. */
+  /** Runs one argv (no shell) with the output directory as cwd, or "/" for a command that runs as another account. Never called by tests with a real implementation. */
   run(argv: string[], opts: { cwd: string }): Promise<{ code: number }>;
 }
 
@@ -19,7 +19,12 @@ export interface ApplyResult {
   ok: boolean;
   /** Step ids in the order they ran successfully. */
   executed: string[];
-  failed?: { id: string; code: number };
+  failed?: {
+    id: string;
+    code: number;
+    /** Set when the runner could not run the command at all (it rejected, for example a spawn error), so there is no exit code. */
+    error?: string;
+  };
   /** Steps left for the other phase, and manual steps. Never run here. */
   skipped: { id: string; reason: "needs-root" | "must-not-run-as-root" | "manual" }[];
   /** argv of every command handed to the runner, in order. */
@@ -38,6 +43,27 @@ export async function applyPlan(plan: Plan, outDirInput: string, runner: Command
   if (rendered === undefined) throw new ApplyRefused(`${outDir}/plan.json not found: run render first`);
   if (JSON.stringify(JSON.parse(rendered)) !== JSON.stringify(plan)) {
     throw new ApplyRefused("the rendered plan.json does not match the config: render again and review it");
+  }
+
+  // Staged files must be exactly what the reviewed plan says, or a unit edited after render would be installed as root.
+  // Checked for every selected file step before the first command runs, whichever phase runs it. Secret files hold no
+  // plan content (they are written from secrets/ at render), so only their existence is checked, here too: a staged
+  // secret that is gone must be found before the first command, not after an account was already created.
+  for (const step of plan.steps) {
+    if (opts.only && !opts.only(step.id)) continue;
+    if (step.kind !== "file" || !step.file) continue;
+    if (step.file.secretRef) {
+      const secret = secretSourceRel(step.file.secretRef);
+      await access(resolve(outDir, secret)).catch(() => {
+        throw new ApplyRefused(`${secret} is missing from ${outDir}: render again`);
+      });
+      continue;
+    }
+    if (step.file.content === undefined) continue;
+    const src = fileSourceRel(step.file.path);
+    const staged = await readFile(resolve(outDir, src), "utf8").catch(() => undefined);
+    if (staged === undefined) throw new ApplyRefused(`${src} is missing from ${outDir}: render again`);
+    if (staged !== step.file.content) throw new ApplyRefused(`${src} no longer matches the plan: render again and review it`);
   }
 
   const result: ApplyResult = { ok: true, executed: [], skipped: [], commands: [] };
@@ -60,7 +86,18 @@ export async function applyPlan(plan: Plan, outDirInput: string, runner: Command
       });
     }
     result.commands.push(argv);
-    const { code } = await runner.run(argv, { cwd: outDir });
+    // Staged sources are relative to the output directory. A command that runs as an account must not start there: the
+    // directory may sit under the operator's home, and env -i does not change the working directory.
+    // A runner that cannot start the command rejects. That is a failed step like any other: it must be reported with its id
+    // so the caller can say what was left half done, not escape as a bare process error.
+    let code: number;
+    try {
+      ({ code } = await runner.run(argv, { cwd: runsAsAccount(argv) ? "/" : outDir }));
+    } catch (e) {
+      result.ok = false;
+      result.failed = { id: step.id, code: -1, error: e instanceof Error ? e.message : String(e) };
+      return result;
+    }
     if (code !== 0) {
       result.ok = false;
       result.failed = { id: step.id, code };

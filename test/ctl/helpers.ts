@@ -39,9 +39,12 @@ export const tmp = () => mkdtemp(join(tmpdir(), "ctl-"));
 
 export class FakeRunner implements CommandRunner {
   calls: string[][] = [];
+  /** The working directory each call was given, in the same order as `calls`. */
+  cwds: string[] = [];
   constructor(private failOn?: (argv: string[]) => boolean) {}
-  async run(argv: string[]) {
+  async run(argv: string[], opts?: { cwd: string }) {
     this.calls.push(argv);
+    this.cwds.push(opts?.cwd ?? "");
     return { code: this.failOn?.(argv) ? 1 : 0 };
   }
 }

@@ -11,6 +11,16 @@ const unitDir = (ctx: ResolvedConfig) => join(ctx.userHome, ".config", "systemd"
 const unitPath = (p: Person, ctx: ResolvedConfig) => join(unitDir(ctx), unitName(p.name));
 
 /**
+ * Where a person's shared (same-user) layout lives, whatever their configured isolation is now. Used by the migration
+ * planner to name the SOURCE of a move; nothing else should reach into the operator's layout this way.
+ */
+export const sharedLayout = (p: Person, ctx: ResolvedConfig) => ({
+  home: home(p, ctx),
+  envFile: envFile(p, ctx),
+  unit: unitName(p.name),
+});
+
+/**
  * All daemons run as the CURRENT Linux user. Separation is by data only: separate PASEO_HOME, project registry,
  * agents, password, port. Agents of one daemon can read the files of every other (same uid). Not OS isolation.
  * Provider CLIs keep using the user's own home, so LLM logins are shared (UNVERIFIED per provider).
